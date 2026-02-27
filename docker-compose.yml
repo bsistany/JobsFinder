@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  # Backend API (FastAPI + Python)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: job-search-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./database:/app/database
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=sqlite:///database/job_search.db
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      - db
+
+  # Frontend (React)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: job-search-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    stdin_open: true
+    tty: true
+
+  # Database (PostgreSQL - for future use)
+  db:
+    image: postgres:15-alpine
+    container_name: job-search-db
+    environment:
+      - POSTGRES_USER=jobsearch
+      - POSTGRES_PASSWORD=jobsearch_password
+      - POSTGRES_DB=job_search_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
