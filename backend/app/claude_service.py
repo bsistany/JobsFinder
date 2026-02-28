@@ -1,6 +1,7 @@
 import os
 import json
 import anthropic
+from typing import List, Dict
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -57,6 +58,48 @@ Rules:
             raw = raw.strip()
 
         return json.loads(raw)
+
+    async def format_job_results(self, what: str, where: str, jobs: List[Dict], total_count: int) -> str:
+        """
+        Use Claude to generate a natural conversational summary of job search results.
+
+        Args:
+            what: Job title / keywords searched
+            where: Location searched
+            jobs: List of job results (we send just titles, companies, locations to keep token usage low)
+            total_count: Total number of results found
+
+        Returns:
+            A conversational summary string
+        """
+        # Send only lightweight job info to keep token usage low
+        job_summaries = [
+            {
+                "title": job.get("title"),
+                "company": job.get("company"),
+                "location": job.get("location"),
+                "salary_min": job.get("salary_min"),
+                "salary_max": job.get("salary_max"),
+            }
+            for job in jobs[:10]
+        ]
+
+        prompt = f"""You are a friendly job search assistant. A user searched for jobs and got results.
+Write a brief, natural, conversational summary of what was found (2-3 sentences max).
+Mention the total count, highlight anything interesting like salary ranges or variety of companies.
+Do not list all the jobs — just give a helpful overview. End with a light encouragement.
+
+Search: "{what}" in "{where if where else 'any location'}"
+Total results found: {total_count}
+Top results: {json.dumps(job_summaries, indent=2)}"""
+
+        message = self.client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=256,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        return message.content[0].text.strip()
 
 
 # Singleton instance

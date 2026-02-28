@@ -37,8 +37,8 @@ async def root():
     return {
         "message": "Job Search AI API",
         "status": "running",
-        "version": "0.3.0",
-        "features": ["chat", "job_search", "adzuna_integration", "claude_nlp"]
+        "version": "0.4.0",
+        "features": ["chat", "job_search", "adzuna_integration", "claude_nlp", "claude_responses"]
     }
 
 @app.get("/health")
@@ -48,8 +48,7 @@ async def health_check():
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(message: ChatMessage):
     """
-    Handle chat messages using Claude for natural language understanding.
-    Claude parses the user's intent and extracts job search parameters.
+    Handle chat messages using Claude for natural language understanding and response generation.
     """
     try:
         parsed = await claude_service.parse_job_search_query(message.message)
@@ -81,12 +80,17 @@ async def chat(message: ChatMessage):
             response=f"I searched for '{what}'{' in ' + where if where else ''} but found no results. Try broader keywords or a different location."
         )
 
-    summary = f"Found {count} jobs"
-    if what:
-        summary += f" for \"{what}\""
-    if where:
-        summary += f" in {where}"
-    summary += ". Here are the top results:"
+    # Phase 2: Use Claude to generate a conversational summary
+    try:
+        summary = await claude_service.format_job_results(
+            what=what,
+            where=where,
+            jobs=jobs,
+            total_count=count
+        )
+    except Exception:
+        # Fallback to hardcoded summary if Claude fails
+        summary = f"Found {count} jobs for \"{what}\"{' in ' + where if where else ''}. Here are the top results:"
 
     return ChatResponse(response=summary, jobs=jobs, job_count=count)
 
