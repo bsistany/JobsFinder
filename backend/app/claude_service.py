@@ -1,23 +1,24 @@
 import os
 import json
-import anthropic
+from groq import Groq
 from typing import List, Dict
 from dotenv import load_dotenv
 
 load_dotenv()
 
 class ClaudeService:
-    """Service for using Claude to parse natural language job search queries."""
+    """Service for using Groq (LLaMA) to parse natural language job search queries."""
 
     def __init__(self):
-        api_key = os.getenv("ANTHROPIC_API_KEY")
+        api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
-            print("WARNING: ANTHROPIC_API_KEY not found in environment variables")
-        self.client = anthropic.Anthropic(api_key=api_key)
+            print("WARNING: GROQ_API_KEY not found in environment variables")
+        self.client = Groq(api_key=api_key)
+        self.model = "llama-3.1-8b-instant"
 
     async def parse_job_search_query(self, user_message: str) -> dict:
         """
-        Use Claude to extract structured job search parameters from natural language.
+        Use LLaMA via Groq to extract structured job search parameters from natural language.
 
         Returns a dict with:
         - is_job_search (bool): whether the message is a job search request
@@ -42,13 +43,13 @@ Rules:
 - If location is "remote" or "work from home", set where to "remote"
 - If no location is mentioned, leave where as empty string"""
 
-        message = self.client.messages.create(
-            model="claude-haiku-4-5-20251001",
+        response = self.client.chat.completions.create(
+            model=self.model,
             max_tokens=256,
             messages=[{"role": "user", "content": prompt}]
         )
 
-        raw = message.content[0].text.strip()
+        raw = response.choices[0].message.content.strip()
 
         # Strip markdown code fences if present
         if raw.startswith("```"):
@@ -61,18 +62,17 @@ Rules:
 
     async def format_job_results(self, what: str, where: str, jobs: List[Dict], total_count: int) -> str:
         """
-        Use Claude to generate a natural conversational summary of job search results.
+        Use LLaMA via Groq to generate a natural conversational summary of job search results.
 
         Args:
             what: Job title / keywords searched
             where: Location searched
-            jobs: List of job results (we send just titles, companies, locations to keep token usage low)
+            jobs: List of job results
             total_count: Total number of results found
 
         Returns:
             A conversational summary string
         """
-        # Send only lightweight job info to keep token usage low
         job_summaries = [
             {
                 "title": job.get("title"),
@@ -93,13 +93,13 @@ Search: "{what}" in "{where if where else 'any location'}"
 Total results found: {total_count}
 Top results: {json.dumps(job_summaries, indent=2)}"""
 
-        message = self.client.messages.create(
-            model="claude-haiku-4-5-20251001",
+        response = self.client.chat.completions.create(
+            model=self.model,
             max_tokens=256,
             messages=[{"role": "user", "content": prompt}]
         )
 
-        return message.content[0].text.strip()
+        return response.choices[0].message.content.strip()
 
 
 # Singleton instance
