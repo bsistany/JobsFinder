@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 from app.adzuna_service import adzuna_service
+from app.claude_service import claude_service
 
 app = FastAPI(title="Job Search AI API")
 
@@ -21,6 +22,8 @@ class ChatMessage(BaseModel):
 
 class ChatResponse(BaseModel):
     response: str
+    jobs: Optional[list] = []
+    job_count: Optional[int] = 0
 
 class JobSearchQuery(BaseModel):
     what: Optional[str] = ""
@@ -34,8 +37,8 @@ async def root():
     return {
         "message": "Job Search AI API",
         "status": "running",
-        "version": "0.2.0",
-        "features": ["chat", "job_search", "adzuna_integration"]
+        "version": "0.3.0",
+        "features": ["chat", "job_search", "adzuna_integration", "claude_nlp"]
     }
 
 @app.get("/health")
@@ -45,24 +48,47 @@ async def health_check():
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(message: ChatMessage):
     """
-    Handle chat messages from the frontend.
-    This is where you'll integrate Claude API later for natural language processing.
+    Handle chat messages using Claude for natural language understanding.
+    Claude parses the user's intent and extracts job search parameters.
     """
-    # Simple keyword detection for now
-    msg = message.message.lower()
-    
-    if any(word in msg for word in ["job", "find", "search", "looking for"]):
+    try:
+        parsed = await claude_service.parse_job_search_query(message.message)
+    except Exception as e:
+        return ChatResponse(response=f"Sorry, I had trouble understanding that. Could you rephrase? (Error: {str(e)})")
+
+    if not parsed.get("is_job_search"):
         return ChatResponse(
-            response="I can help you search for jobs! Try using the format: 'Find [job title] jobs in [location]'. For example: 'Find Python developer jobs in Toronto'"
+            response="I'm your job search assistant! Try asking me something like: 'Find senior cybersecurity jobs in remote' or 'Show me React developer roles in Toronto'."
         )
-    elif any(word in msg for word in ["cover letter", "resume", "cv"]):
+
+    what = parsed.get("what", "")
+    where = parsed.get("where", "")
+
+    result = await adzuna_service.search_jobs(
+        what=what,
+        where=where,
+        results_per_page=10
+    )
+
+    if "error" in result:
+        return ChatResponse(response=f"I understood your search but ran into an issue fetching results: {result['error']}")
+
+    jobs = result.get("jobs", [])
+    count = result.get("count", 0)
+
+    if not jobs:
         return ChatResponse(
-            response="Cover letter and resume features are coming in Phase 3 with AI integration!"
+            response=f"I searched for '{what}'{' in ' + where if where else ''} but found no results. Try broader keywords or a different location."
         )
-    else:
-        return ChatResponse(
-            response=f"You said: {message.message}. I'm still learning! Try asking me to find jobs or help with cover letters."
-        )
+
+    summary = f"Found {count} jobs"
+    if what:
+        summary += f" for \"{what}\""
+    if where:
+        summary += f" in {where}"
+    summary += ". Here are the top results:"
+
+    return ChatResponse(response=summary, jobs=jobs, job_count=count)
 
 @app.get("/api/jobs/search")
 async def search_jobs(
@@ -73,7 +99,7 @@ async def search_jobs(
 ):
     """
     Search for jobs using Adzuna API.
-    
+
     Query parameters:
     - what: Job title, keywords, or skills (e.g., "python developer")
     - where: Location (e.g., "toronto", "ontario")
@@ -86,10 +112,10 @@ async def search_jobs(
         page=page,
         results_per_page=results_per_page
     )
-    
+
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
-    
+
     return result
 
 @app.post("/api/jobs/search")
@@ -103,10 +129,10 @@ async def search_jobs_post(query: JobSearchQuery):
         page=query.page,
         results_per_page=query.results_per_page
     )
-    
+
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
-    
+
     return result
 
 @app.get("/api/jobs/categories")
