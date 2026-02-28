@@ -9,3 +9,5 @@ python-dotenv==1.0.0
 beautifulsoup4==4.12.3
 requests==2.31.0
 chromadb==0.4.22
+pytest
+pytest-asyncio
