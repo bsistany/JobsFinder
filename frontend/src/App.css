@@ -490,3 +490,156 @@
   line-height: 2;
   font-size: 1rem;
 }
+
+/* ─── Career Advisor Phase B ─────────────────────────────────────────────── */
+
+.advisor-centered {
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  color: #666;
+  font-size: 1.1rem;
+  gap: 15px;
+}
+
+.advisor-spinner {
+  font-size: 3rem;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.15); opacity: 0.7; }
+}
+
+.advisor-profile {
+  margin-bottom: 25px;
+}
+
+.advisor-profile h2 {
+  color: #667eea;
+  margin-bottom: 15px;
+}
+
+.profile-summary {
+  background: #f8f9fa;
+  border-left: 4px solid #667eea;
+  border-radius: 8px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #444;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.advisor-questions h3 {
+  color: #555;
+  margin-bottom: 20px;
+  font-size: 1.1rem;
+}
+
+.question-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.question-block label {
+  font-weight: 600;
+  color: #444;
+  font-size: 0.95rem;
+}
+
+.question-block input {
+  padding: 10px 16px;
+  border: 2px solid #e0e0e0;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.3s;
+  font-family: inherit;
+}
+
+.question-block input:focus {
+  border-color: #667eea;
+}
+
+.advisor-error {
+  color: #c62828;
+  background: #ffebee;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  margin-top: 10px;
+}
+
+.reset-link {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 0.9rem;
+  cursor: pointer;
+  margin-top: 20px;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.reset-link:hover {
+  color: #667eea;
+}
+
+.suggestions-intro {
+  background: linear-gradient(135deg, rgba(102,126,234,0.1) 0%, rgba(118,75,162,0.1) 100%);
+  border-radius: 12px;
+  padding: 16px 20px;
+  color: #444;
+  font-size: 1rem;
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
+.suggestions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 25px;
+}
+
+.suggestion-card {
+  background: white;
+  border: 2px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 16px 20px;
+  transition: all 0.2s;
+}
+
+.suggestion-card:hover {
+  border-color: #667eea;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
+}
+
+.suggestion-card h3 {
+  color: #333;
+  margin-bottom: 6px;
+  font-size: 1.1rem;
+}
+
+.suggestion-card p {
+  color: #666;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.advisor-note {
+  background: #fff8e1;
+  border-left: 4px solid #f9a825;
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: #555;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-bottom: 15px;
+}

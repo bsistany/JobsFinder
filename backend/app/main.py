@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from app.adzuna_service import adzuna_service
 from app.claude_service import claude_service
 
@@ -16,7 +16,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Models
+# ─── Models ──────────────────────────────────────────────────────────────────
+
 class ChatMessage(BaseModel):
     message: str
 
@@ -31,19 +32,34 @@ class JobSearchQuery(BaseModel):
     page: Optional[int] = 1
     results_per_page: Optional[int] = 10
 
-# Routes
+class ResumeAnalysisRequest(BaseModel):
+    resume_text: str
+
+class AdvisorAnswer(BaseModel):
+    question_id: str
+    question: str
+    answer: str
+
+class JobSuggestionsRequest(BaseModel):
+    profile: dict
+    answers: List[AdvisorAnswer]
+
+# ─── General Routes ───────────────────────────────────────────────────────────
+
 @app.get("/")
 async def root():
     return {
         "message": "Job Search AI API",
         "status": "running",
-        "version": "0.4.0",
-        "features": ["chat", "job_search", "adzuna_integration", "claude_nlp", "claude_responses"]
+        "version": "0.5.0",
+        "features": ["chat", "job_search", "adzuna_integration", "claude_nlp", "claude_responses", "career_advisor"]
     }
 
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+# ─── Job Search Routes ────────────────────────────────────────────────────────
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(message: ChatMessage):
@@ -80,7 +96,6 @@ async def chat(message: ChatMessage):
             response=f"I searched for '{what}'{' in ' + where if where else ''} but found no results. Try broader keywords or a different location."
         )
 
-    # Phase 2: Use Claude to generate a conversational summary
     try:
         summary = await claude_service.format_job_results(
             what=what,
@@ -89,7 +104,6 @@ async def chat(message: ChatMessage):
             total_count=count
         )
     except Exception:
-        # Fallback to hardcoded summary if Claude fails
         summary = f"Found {count} jobs for \"{what}\"{' in ' + where if where else ''}. Here are the top results:"
 
     return ChatResponse(response=summary, jobs=jobs, job_count=count)
@@ -101,51 +115,63 @@ async def search_jobs(
     page: int = 1,
     results_per_page: int = 10
 ):
-    """
-    Search for jobs using Adzuna API.
-
-    Query parameters:
-    - what: Job title, keywords, or skills (e.g., "python developer")
-    - where: Location (e.g., "toronto", "ontario")
-    - page: Page number (default: 1)
-    - results_per_page: Results per page (default: 10, max: 50)
-    """
     result = await adzuna_service.search_jobs(
         what=what,
         where=where,
         page=page,
         results_per_page=results_per_page
     )
-
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
-
     return result
 
 @app.post("/api/jobs/search")
 async def search_jobs_post(query: JobSearchQuery):
-    """
-    Search for jobs using POST (for complex queries).
-    """
     result = await adzuna_service.search_jobs(
         what=query.what,
         where=query.where,
         page=query.page,
         results_per_page=query.results_per_page
     )
-
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
-
     return result
 
 @app.get("/api/jobs/categories")
 async def get_categories():
-    """
-    Get available job categories from Adzuna.
-    """
     categories = await adzuna_service.get_job_categories()
     return {"categories": categories}
+
+# ─── Career Advisor Routes ────────────────────────────────────────────────────
+
+@app.post("/api/advisor/analyze")
+async def analyze_resume(request: ResumeAnalysisRequest):
+    """
+    Analyze a resume and return a candidate profile + clarifying questions.
+    """
+    if not request.resume_text or len(request.resume_text.strip()) < 100:
+        raise HTTPException(status_code=400, detail="Resume text is too short.")
+
+    try:
+        result = await claude_service.analyze_resume(request.resume_text)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error analyzing resume: {str(e)}")
+
+@app.post("/api/advisor/suggest")
+async def suggest_jobs(request: JobSuggestionsRequest):
+    """
+    Based on resume profile + clarifying answers, suggest job titles to search for.
+    """
+    try:
+        answers = [a.dict() for a in request.answers]
+        result = await claude_service.suggest_job_titles(
+            profile=request.profile,
+            answers=answers
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error suggesting jobs: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

@@ -140,121 +140,248 @@ function JobSearchTab() {
 
 // ─── Career Advisor Tab ───────────────────────────────────────────────────────
 
+const ADVISOR_STAGE = {
+  INPUT: 'input',
+  ANALYZING: 'analyzing',
+  QUESTIONS: 'questions',
+  SUGGESTING: 'suggesting',
+  READY: 'ready',
+};
+
 function CareerAdvisorTab() {
+  const [stage, setStage] = useState(ADVISOR_STAGE.INPUT);
   const [resumeText, setResumeText] = useState('');
-  const [fileName, setFileName] = useState('');
   const [inputMode, setInputMode] = useState('paste');
-  const [resumeReady, setResumeReady] = useState(false);
+  const [fileName, setFileName] = useState('');
+  const [profile, setProfile] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  const [answers, setAnswers] = useState({});
+  const [suggestions, setSuggestions] = useState(null);
+  const [error, setError] = useState('');
 
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
     if (file.type !== 'application/pdf') {
       alert('Please upload a PDF file.');
       return;
     }
-
     setFileName(file.name);
-    setResumeReady(false);
-    alert(`"${file.name}" selected. PDF parsing will be available in the next update!`);
+    alert(`"${file.name}" selected. PDF parsing coming in the next update!`);
   };
 
-  const handlePasteSubmit = () => {
-    if (resumeText.trim().length < 100) {
-      alert('Please paste more of your resume — it looks too short.');
-      return;
+  const handleAnalyze = async () => {
+    setError('');
+    setStage(ADVISOR_STAGE.ANALYZING);
+    try {
+      const response = await axios.post(`${API_URL}/api/advisor/analyze`, {
+        resume_text: resumeText
+      });
+      setProfile(response.data.profile);
+      setQuestions(response.data.questions);
+      setStage(ADVISOR_STAGE.QUESTIONS);
+    } catch (err) {
+      setError('Sorry, I had trouble analyzing your resume. Please try again.');
+      setStage(ADVISOR_STAGE.INPUT);
     }
-    setResumeReady(true);
+  };
+
+  const handleAnswerChange = (questionId, value) => {
+    setAnswers(prev => ({ ...prev, [questionId]: value }));
+  };
+
+  const allAnswered = questions.length > 0 &&
+    questions.every(q => answers[q.id] && answers[q.id].trim().length > 0);
+
+  const handleSuggest = async () => {
+    setError('');
+    setStage(ADVISOR_STAGE.SUGGESTING);
+    try {
+      const formattedAnswers = questions.map(q => ({
+        question_id: q.id,
+        question: q.text,
+        answer: answers[q.id] || ''
+      }));
+      const response = await axios.post(`${API_URL}/api/advisor/suggest`, {
+        profile,
+        answers: formattedAnswers
+      });
+      setSuggestions(response.data);
+      setStage(ADVISOR_STAGE.READY);
+    } catch (err) {
+      setError('Sorry, I had trouble generating suggestions. Please try again.');
+      setStage(ADVISOR_STAGE.QUESTIONS);
+    }
   };
 
   const handleReset = () => {
+    setStage(ADVISOR_STAGE.INPUT);
     setResumeText('');
     setFileName('');
-    setResumeReady(false);
+    setProfile(null);
+    setQuestions([]);
+    setAnswers({});
+    setSuggestions(null);
+    setError('');
   };
 
-  return (
-    <div className="tab-content advisor-content">
-      {!resumeReady ? (
-        <div className="advisor-input">
-          <div className="advisor-intro">
-            <h2>🎯 Career Advisor</h2>
-            <p>
-              Upload or paste your resume and I'll analyze your background,
-              ask a few clarifying questions, and search for the best-fit
-              roles across multiple job categories — all at once.
-            </p>
-          </div>
+  // ── Stage: Resume Input ──
+  if (stage === ADVISOR_STAGE.INPUT) {
+    return (
+      <div className="tab-content advisor-content">
+        <div className="advisor-intro">
+          <h2>🎯 Career Advisor</h2>
+          <p>
+            Paste your resume and I'll analyze your background, ask a few
+            clarifying questions, and find the best-fit roles for you across
+            multiple job categories.
+          </p>
+        </div>
 
-          <div className="input-mode-toggle">
+        <div className="input-mode-toggle">
+          <button
+            className={inputMode === 'paste' ? 'mode-btn active' : 'mode-btn'}
+            onClick={() => setInputMode('paste')}
+          >
+            📋 Paste Resume
+          </button>
+          <button
+            className={inputMode === 'upload' ? 'mode-btn active' : 'mode-btn'}
+            onClick={() => setInputMode('upload')}
+          >
+            📄 Upload PDF
+          </button>
+        </div>
+
+        {inputMode === 'paste' && (
+          <div className="paste-input">
+            <textarea
+              value={resumeText}
+              onChange={(e) => setResumeText(e.target.value)}
+              placeholder="Paste the text of your resume here..."
+              rows={14}
+            />
             <button
-              className={inputMode === 'paste' ? 'mode-btn active' : 'mode-btn'}
-              onClick={() => setInputMode('paste')}
+              className="advisor-submit-btn"
+              onClick={handleAnalyze}
+              disabled={resumeText.trim().length < 100}
             >
-              📋 Paste Resume
-            </button>
-            <button
-              className={inputMode === 'upload' ? 'mode-btn active' : 'mode-btn'}
-              onClick={() => setInputMode('upload')}
-            >
-              📄 Upload PDF
+              Analyze My Resume →
             </button>
           </div>
+        )}
 
-          {inputMode === 'paste' && (
-            <div className="paste-input">
-              <textarea
-                value={resumeText}
-                onChange={(e) => setResumeText(e.target.value)}
-                placeholder="Paste the text of your resume here..."
-                rows={14}
+        {inputMode === 'upload' && (
+          <div className="upload-input">
+            <label className="upload-label">
+              <input
+                type="file"
+                accept="application/pdf"
+                onChange={handleFileUpload}
+                style={{ display: 'none' }}
               />
-              <button
-                className="advisor-submit-btn"
-                onClick={handlePasteSubmit}
-                disabled={resumeText.trim().length < 100}
-              >
-                Analyze My Resume →
-              </button>
-            </div>
-          )}
+              {fileName ? <span>📄 {fileName}</span> : <span>Click to select a PDF file</span>}
+            </label>
+            <p className="upload-note">PDF parsing coming in the next update.</p>
+          </div>
+        )}
 
-          {inputMode === 'upload' && (
-            <div className="upload-input">
-              <label className="upload-label">
-                <input
-                  type="file"
-                  accept="application/pdf"
-                  onChange={handleFileUpload}
-                  style={{ display: 'none' }}
-                />
-                {fileName ? (
-                  <span>📄 {fileName}</span>
-                ) : (
-                  <span>Click to select a PDF file</span>
-                )}
-              </label>
-              <p className="upload-note">PDF parsing coming in the next update.</p>
+        {error && <p className="advisor-error">{error}</p>}
+      </div>
+    );
+  }
+
+  // ── Stage: Analyzing ──
+  if (stage === ADVISOR_STAGE.ANALYZING) {
+    return (
+      <div className="tab-content advisor-content advisor-centered">
+        <div className="advisor-spinner">🔍</div>
+        <p>Analyzing your resume...</p>
+      </div>
+    );
+  }
+
+  // ── Stage: Clarifying Questions ──
+  if (stage === ADVISOR_STAGE.QUESTIONS) {
+    return (
+      <div className="tab-content advisor-content">
+        <div className="advisor-profile">
+          <h2>🎯 Great — I've read your resume!</h2>
+          <div className="profile-summary">
+            <p><strong>Background:</strong> {profile?.summary}</p>
+            <p><strong>Experience level:</strong> {profile?.experience_level}</p>
+            <p><strong>Key skills:</strong> {profile?.key_skills?.join(', ')}</p>
+            <p><strong>Possible directions:</strong> {profile?.possible_directions?.join(', ')}</p>
+          </div>
+        </div>
+
+        <div className="advisor-questions">
+          <h3>Just a few questions to narrow things down:</h3>
+          {questions.map((q) => (
+            <div key={q.id} className="question-block">
+              <label>{q.text}</label>
+              <input
+                type="text"
+                value={answers[q.id] || ''}
+                onChange={(e) => handleAnswerChange(q.id, e.target.value)}
+                placeholder="Your answer..."
+              />
             </div>
-          )}
+          ))}
+
+          <button
+            className="advisor-submit-btn"
+            onClick={handleSuggest}
+            disabled={!allAnswered}
+          >
+            Find My Jobs →
+          </button>
         </div>
-      ) : (
-        <div className="advisor-ready">
-          <div className="resume-confirmed">
-            <span>✅ Resume received</span>
-            <button className="reset-btn" onClick={handleReset}>Start Over</button>
-          </div>
-          <div className="advisor-placeholder">
-            <p>🚧 Analysis coming in Phase B!</p>
-            <p>Your resume has been received. In the next update, I'll analyze
-            your background and ask a few questions before searching for the
-            best-fit roles for you.</p>
-          </div>
+
+        {error && <p className="advisor-error">{error}</p>}
+        <button className="reset-link" onClick={handleReset}>← Start over</button>
+      </div>
+    );
+  }
+
+  // ── Stage: Suggesting ──
+  if (stage === ADVISOR_STAGE.SUGGESTING) {
+    return (
+      <div className="tab-content advisor-content advisor-centered">
+        <div className="advisor-spinner">🤔</div>
+        <p>Finding the best job titles for you...</p>
+      </div>
+    );
+  }
+
+  // ── Stage: Ready ──
+  if (stage === ADVISOR_STAGE.READY) {
+    return (
+      <div className="tab-content advisor-content">
+        <div className="suggestions-intro">
+          <p>{suggestions?.intro}</p>
         </div>
-      )}
-    </div>
-  );
+
+        <div className="suggestions-list">
+          {suggestions?.searches?.map((s, i) => (
+            <div key={i} className="suggestion-card">
+              <h3>🔎 {s.title}</h3>
+              <p>{s.rationale}</p>
+            </div>
+          ))}
+        </div>
+
+        <p className="advisor-note">
+          🚧 <strong>Phase C coming next:</strong> I'll run all these searches
+          automatically and show you the combined results!
+        </p>
+
+        <button className="reset-link" onClick={handleReset}>← Start over</button>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
