@@ -32,7 +32,7 @@ job-search-ai/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py              # FastAPI routes
-│   │   ├── claude_service.py    # Groq/LLM calls (parse queries, format responses)
+│   │   ├── claude_service.py    # Groq/LLM calls (parse queries, format responses, advisor)
 │   │   └── adzuna_service.py    # Adzuna job search API calls
 │   ├── tests/
 │   │   └── test_claude_service.py  # Unit tests (8 tests, all passing)
@@ -46,8 +46,7 @@ job-search-ai/
 │   ├── Dockerfile
 │   └── package.json
 ├── docker-compose.yml
-├── ROADMAP.md                   # This file
-├── ARCHITECTURE.md              # Architecture diagram and decisions (to be created)
+├── ROADMAP.md                   # This file — persistent memory across sessions
 ├── README.md
 └── .gitignore                   # .env, node_modules, __pycache__ excluded
 ```
@@ -64,6 +63,7 @@ job-search-ai/
 | No database yet | — | Not needed until user accounts / saved jobs feature |
 | All AI calls via backend | FastAPI only | API keys never exposed to frontend |
 | Groq class name | `ClaudeService` in `claude_service.py` | Kept name to avoid breaking imports; easy to rename later |
+| Advisor flow | Conversational chat, not rigid form | User needs to correct/challenge AI profile assessment freely |
 
 ---
 
@@ -73,10 +73,12 @@ job-search-ai/
 |---|---|---|
 | GET | `/` | Version and feature info |
 | GET | `/health` | Health check |
-| POST | `/api/chat` | Main chat endpoint — Claude parses intent, calls Adzuna, formats response |
+| POST | `/api/chat` | Main chat — Groq parses intent, calls Adzuna, formats response |
 | GET | `/api/jobs/search` | Direct Adzuna job search |
 | POST | `/api/jobs/search` | Direct Adzuna job search (POST) |
 | GET | `/api/jobs/categories` | Adzuna job categories |
+| POST | `/api/advisor/analyze` | Analyze resume text, return profile + clarifying questions |
+| POST | `/api/advisor/chat` | Conversational advisor chat with resume + history context |
 
 ---
 
@@ -99,25 +101,52 @@ job-search-ai/
 - Career Advisor tab: paste resume text or upload PDF (upload UI only — parsing in Phase B)
 - App.js refactored into `JobSearchTab`, `CareerAdvisorTab`, `App` components
 
+### Career Advisor Phase B (partial) — Resume Analysis
+- New backend endpoint `POST /api/advisor/analyze` — returns candidate profile + clarifying questions
+- New backend endpoint `POST /api/advisor/suggest` — returns job title suggestions based on profile + answers
+- Multi-stage frontend flow: Input → Analyzing → Questions → Suggesting → Ready
+- Version bumped to `0.5.0`
+
 ---
 
 ## 🔜 In Progress
 
-### Career Advisor Phase B — Resume Analysis + Clarifying Questions
-- [ ] New backend endpoint `POST /api/advisor/analyze` — receives resume text, returns extracted profile + clarifying questions
-- [ ] New backend endpoint `POST /api/advisor/search` — receives resume + answers, returns suggested job titles
-- [ ] Groq extracts: skills, experience level, possible job directions
-- [ ] 2-3 clarifying questions (e.g. IC vs management, remote vs hybrid)
-- [ ] Multi-turn conversation history in advisor session (absorbs original Phase 3)
-- [ ] Frontend wires up clarifying questions flow after resume submission
+### Career Advisor Phase B (revised) — Conversational Advisor Chat
+Replacing the rigid questions form with a free-form chat interface after resume analysis.
+
+**Why the change:** Initial profile assessment can be wrong (e.g. misidentified experience level).
+User needs to be able to challenge, correct, and refine the profile conversationally before searching.
+
+**New flow:**
+```
+Resume input
+    ↓
+AI analyzes → profile summary shown (scrollable, pinned at top)
+    ↓
+Chat window opens below (like Job Search tab)
+    ↓
+User chats freely:
+  - "why did you say intermediate? I have 20 years experience"
+  - "change location to remote"
+  - "looks good, find my jobs now"
+    ↓
+AI responds, updates profile if needed
+AI detects "find jobs" intent → triggers job title suggestions automatically
+```
+
+**Implementation plan:**
+- [ ] New `POST /api/advisor/chat` endpoint — accepts resume text + conversation history + latest message
+- [ ] New `advisor_chat()` method in `claude_service.py` — handles profile updates, Q&A, and intent detection
+- [ ] Frontend: replace rigid stage form with pinned profile summary + chat window
+- [ ] Remove `/api/advisor/suggest` endpoint (absorbed into advisor chat flow)
+- [ ] AI detects "ready to search" intent and returns structured job suggestions in same response
 
 ---
 
 ## 📋 Planned
 
 ### Career Advisor Phase C — Multi-Search + Combined Results
-- Groq suggests multiple job titles based on resume + clarifying answers
-- Parallel Adzuna searches for each title
+- Backend runs parallel Adzuna searches for each suggested job title
 - Combined deduplicated results grouped by job category
 - Conversational presentation with resume context
 
@@ -131,9 +160,9 @@ job-search-ai/
 ## 🐛 Known Issues
 
 ### KI-001: No conversational context in Job Search tab
-**Status:** Open — fix planned in Career Advisor Phase B
+**Status:** Open — will be addressed after Career Advisor chat is built (same pattern)
 **Description:** Follow-up messages lose prior search context.
-**Example:** Search "cybersecurity jobs in Ottawa" → "how about remote instead?" loses the job title, returns no results.
+**Example:** Search "cybersecurity jobs in Ottawa" → "how about remote instead?" loses the job title.
 
 ---
 
