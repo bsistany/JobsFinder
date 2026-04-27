@@ -838,7 +838,7 @@ const VIEWS = {
 
 export default function App() {
   const [view, setView] = useState('pipeline');
-  const [activeTab, setActiveTab] = useState('search');
+  const [activeTab, setActiveTab] = useState('pipeline');
   const [version, setVersion] = useState('');
 
   useEffect(() => {
