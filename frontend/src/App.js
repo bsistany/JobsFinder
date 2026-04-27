@@ -330,6 +330,7 @@ function PipelinePage() {
     setLoadingQueue(true);
     axios.get(`${API}/api/pipeline/queue`)
       .then(r => setQueue(r.data.jobs || []))
+      .catch(() => setQueue([]))
       .finally(() => setLoadingQueue(false));
   }, []);
 
@@ -837,7 +838,7 @@ const VIEWS = {
 
 export default function App() {
   const [view, setView] = useState('pipeline');
-  const [activeTab, setActiveTab] = useState('pipeline');
+  const [activeTab, setActiveTab] = useState('search');
   const [version, setVersion] = useState('');
 
   useEffect(() => {
