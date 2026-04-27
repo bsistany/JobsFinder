@@ -58,8 +58,8 @@ class PipelineService:
             ]
         }
         """
-        intro_trunc = _truncate(intro_text, 300)
-        resume_trunc = _truncate(resume_text, 400)
+        intro_trunc = _truncate(intro_text, 200)
+        resume_trunc = _truncate(resume_text, 300)
 
         prompt = f"""You are a career advisor helping a professional find the best-fit job roles.
 Analyze the intro document and resume below, then:
@@ -98,11 +98,19 @@ Respond with JSON only, no explanation. Use this exact structure:
 
         response = self.client.chat.completions.create(
             model=self.model,
-            max_tokens=1500,
+            max_tokens=2000,
             messages=[{"role": "user", "content": prompt}]
         )
         raw = _strip_json_fences(response.choices[0].message.content)
-        return json.loads(raw)
+        # If response was truncated, attempt to salvage partial JSON
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            # Truncate to last complete top-level field and close the object
+            last_brace = raw.rfind('},')
+            if last_brace > 0:
+                raw = raw[:last_brace + 1] + ']}'
+            return json.loads(raw)
 
     async def refine_titles(
         self,
