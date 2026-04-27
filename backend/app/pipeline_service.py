@@ -133,19 +133,20 @@ Respond with JSON only, no explanation. Use this exact structure:
 Candidate profile:
 {json.dumps(profile, indent=2)}
 
-Initially suggested titles:
+Titles the candidate has already selected and confirmed:
 {json.dumps(suggested_titles, indent=2)}
 
 Clarifying answers:
 {json.dumps(answers, indent=2)}
 
-Based on the answers, produce the final list of job search titles to use.
-Keep titles that still fit, remove any that don't match the preferences expressed,
-and add new ones if the answers suggest better directions.
+IMPORTANT: Keep ALL of the already-selected titles above — do not remove any of them.
+Based on the clarifying answers, you may ADD up to 3 additional titles if the answers
+suggest relevant directions not already covered. Do not add titles that overlap with
+existing ones.
 
 Respond with JSON only:
 {{
-  "titles": ["Final Title 1", "Final Title 2", "...up to 6 titles"],
+  "titles": ["Every selected title preserved, plus any new additions"],
   "summary": "One sentence confirming what you set up and why"
 }}"""
 

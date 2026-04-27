@@ -44,6 +44,15 @@ CREATE TABLE IF NOT EXISTS applications (
 )
 """
 
+CREATE_ADVISOR_SESSION_TABLE = """
+CREATE TABLE IF NOT EXISTS advisor_session (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    stage TEXT NOT NULL DEFAULT 'idle',
+    data TEXT NOT NULL DEFAULT '{}',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
 async def _connect() -> aiosqlite.Connection:
     """Open a connection, set row_factory and WAL mode. Always use as async with."""
     db = await aiosqlite.connect(DB_PATH)
@@ -59,6 +68,7 @@ async def init_db():
         await db.execute(CREATE_PROFILE_TABLE)
         await db.execute(CREATE_JOB_TITLES_TABLE)
         await db.execute(CREATE_APPLICATIONS_TABLE)
+        await db.execute(CREATE_ADVISOR_SESSION_TABLE)
         await db.commit()
 
 # ─── Profile helpers ─────────────────────────────────────────────────────────
@@ -192,3 +202,34 @@ async def save_generated_docs(job_id: str, resume_notes: str, cover_letter: str)
         """, (resume_notes, cover_letter, job_id))
         await db.commit()
     return await get_application(job_id)
+
+# ─── Advisor session helpers ──────────────────────────────────────────────────
+
+async def get_advisor_session() -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM advisor_session WHERE id = 1") as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return {"stage": "idle", "data": {}}
+            import json
+            return {"stage": row["stage"], "data": json.loads(row["data"])}
+
+async def save_advisor_session(stage: str, data: dict) -> None:
+    import json
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute("""
+            INSERT INTO advisor_session (id, stage, data, updated_at)
+            VALUES (1, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(id) DO UPDATE SET
+                stage = excluded.stage,
+                data = excluded.data,
+                updated_at = CURRENT_TIMESTAMP
+        """, (stage, json.dumps(data)))
+        await db.commit()
+
+async def clear_advisor_session() -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM advisor_session WHERE id = 1")
+        await db.commit()

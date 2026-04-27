@@ -125,7 +125,44 @@ function SetupPage() {
     axios.get(`${API}/api/pipeline/titles`).then(r => setStoredTitles(r.data.titles || []));
   }, []);
 
-  useEffect(() => { loadTitles(); }, [loadTitles]);
+  // Load persisted advisor session on mount
+  useEffect(() => {
+    loadTitles();
+    axios.get(`${API}/api/pipeline/setup/session`).then(r => {
+      const { stage: s, data: d } = r.data;
+      if (s && s !== 'idle') {
+        setStage(s);
+        if (d.profileData) setProfileData(d.profileData);
+        if (d.suggestedTitles) {
+          setSuggestedTitles(d.suggestedTitles);
+          setSelectedSuggested(new Set(d.selectedSuggested || d.suggestedTitles.map((_,i) => i)));
+        }
+        if (d.questions) setQuestions(d.questions);
+        if (d.answers) setAnswers(d.answers);
+        if (d.finalTitles) {
+          setFinalTitles(d.finalTitles);
+          setSelectedFinal(new Set(d.selectedFinal || d.finalTitles.map((_,i) => i)));
+        }
+      }
+    }).catch(() => {});
+  }, [loadTitles]);
+
+  // Persist session whenever key state changes
+  const persistSession = useCallback((overrides = {}) => {
+    const state = {
+      stage: overrides.stage ?? stage,
+      data: {
+        profileData: overrides.profileData ?? profileData,
+        suggestedTitles: overrides.suggestedTitles ?? suggestedTitles,
+        selectedSuggested: [...(overrides.selectedSuggested ?? selectedSuggested)],
+        questions: overrides.questions ?? questions,
+        answers: overrides.answers ?? answers,
+        finalTitles: overrides.finalTitles ?? finalTitles,
+        selectedFinal: [...(overrides.selectedFinal ?? selectedFinal)],
+      }
+    };
+    axios.post(`${API}/api/pipeline/setup/session`, state).catch(() => {});
+  }, [stage, profileData, suggestedTitles, selectedSuggested, questions, answers, finalTitles, selectedFinal]);
 
   const runAnalysis = async () => {
     setError('');
@@ -140,11 +177,16 @@ function SetupPage() {
         intro_text: profile.data.profile.intro_text,
         resume_text: profile.data.profile.resume_text
       });
-      setProfileData(r.data.profile);
-      setSuggestedTitles(r.data.suggested_titles || []);
-      setSelectedSuggested(new Set((r.data.suggested_titles || []).map((_,i) => i)));
-      setQuestions(r.data.questions || []);
+      const pd = r.data.profile;
+      const st = r.data.suggested_titles || [];
+      const qs = r.data.questions || [];
+      const sel = new Set(st.map((_,i) => i));
+      setProfileData(pd);
+      setSuggestedTitles(st);
+      setSelectedSuggested(sel);
+      setQuestions(qs);
       setStage(SETUP_STAGE.QUESTIONS);
+      persistSession({ stage: SETUP_STAGE.QUESTIONS, profileData: pd, suggestedTitles: st, selectedSuggested: sel, questions: qs, answers: {} });
     } catch(e) {
       setError(e.response?.data?.detail || 'Analysis failed.');
       setStage(SETUP_STAGE.IDLE);
@@ -161,9 +203,12 @@ function SetupPage() {
         suggested_titles: suggestedTitles.filter((_,i) => selectedSuggested.has(i)),
         answers: questions.map(q => ({ question_id: q.id, question: q.text, answer: answers[q.id] || '' }))
       });
-      setFinalTitles(r.data.titles || []);
-      setSelectedFinal(new Set((r.data.titles || []).map((_,i) => i)));
+      const ft = r.data.titles || [];
+      const sf = new Set(ft.map((_,i) => i));
+      setFinalTitles(ft);
+      setSelectedFinal(sf);
       setStage(SETUP_STAGE.DONE);
+      persistSession({ stage: SETUP_STAGE.DONE, finalTitles: ft, selectedFinal: sf });
     } catch(e) {
       setError(e.response?.data?.detail || 'Refinement failed.');
       setStage(SETUP_STAGE.QUESTIONS);
@@ -173,9 +218,13 @@ function SetupPage() {
   const confirmTitles = async () => {
     setSaving(true);
     try {
-      const toSave = finalTitles.filter((_,i) => selectedFinal.has(i));
-      if (toSave.length === 0) { setError('Select at least one title.'); setSaving(false); return; }
-      await axios.post(`${API}/api/pipeline/titles`, { titles: toSave });
+      const advisorTitles = finalTitles.filter((_,i) => selectedFinal.has(i));
+      // Merge with any manually added stored titles (already in DB)
+      const storedTitleStrings = storedTitles.map(t => t.title);
+      const merged = [...new Set([...storedTitleStrings, ...advisorTitles])];
+      if (merged.length === 0) { setError('Select at least one title.'); setSaving(false); return; }
+      await axios.post(`${API}/api/pipeline/titles`, { titles: merged });
+      await axios.delete(`${API}/api/pipeline/setup/session`);
       loadTitles();
       setStage(SETUP_STAGE.IDLE);
       setProfileData(null); setSuggestedTitles([]); setSelectedSuggested(new Set());
@@ -271,7 +320,10 @@ function SetupPage() {
           {suggestedTitles.map((s,i) => {
             const on = selectedSuggested.has(i);
             return (
-              <div key={i} onClick={() => setSelectedSuggested(prev => { const n = new Set(prev); on ? n.delete(i) : n.add(i); return n; })}
+              <div key={i} onClick={() => setSelectedSuggested(prev => {
+                const n = new Set(prev); on ? n.delete(i) : n.add(i);
+                persistSession({ selectedSuggested: n }); return n;
+              })}
                 style={{background: on ? 'var(--bg)' : 'var(--bg3)', border: `1px solid ${on ? 'var(--border2)' : 'var(--border)'}`,
                   borderRadius:'var(--radius)', padding:12, marginBottom:8, cursor:'pointer',
                   opacity: on ? 1 : 0.45, transition:'all .15s', display:'flex', alignItems:'flex-start', gap:10}}>
@@ -294,7 +346,11 @@ function SetupPage() {
               <input
                 type="text"
                 value={answers[q.id] || ''}
-                onChange={e => setAnswers(a => ({...a, [q.id]: e.target.value}))}
+                onChange={e => {
+                  const updated = {...answers, [q.id]: e.target.value};
+                  setAnswers(updated);
+                  persistSession({ answers: updated });
+                }}
                 placeholder="Your answer…"
               />
             </div>
@@ -320,7 +376,10 @@ function SetupPage() {
           {finalTitles.map((t,i) => {
             const on = selectedFinal.has(i);
             return (
-              <div key={i} onClick={() => setSelectedFinal(prev => { const n = new Set(prev); on ? n.delete(i) : n.add(i); return n; })}
+              <div key={i} onClick={() => setSelectedFinal(prev => {
+                const n = new Set(prev); on ? n.delete(i) : n.add(i);
+                persistSession({ selectedFinal: n }); return n;
+              })}
                 style={{display:'inline-flex', alignItems:'center', gap:6,
                   background: on ? 'var(--bg3)' : 'var(--bg)', border: `1px solid ${on ? 'var(--border2)' : 'var(--border)'}`,
                   borderRadius:4, padding:'5px 10px 5px 10px', fontFamily:'var(--mono)', fontSize:12,
@@ -333,7 +392,7 @@ function SetupPage() {
           })}
           <div className="btn-row">
             <button className="btn btn-success" onClick={confirmTitles} disabled={saving}>
-              {saving ? <><span className="spinner"/> saving…</> : `✓ save ${[...selectedFinal].length} title${[...selectedFinal].length !== 1 ? 's' : ''}`}
+              {saving ? <><span className="spinner"/> saving…</> : `✓ save ${[...selectedFinal].length + storedTitles.length} title${([...selectedFinal].length + storedTitles.length) !== 1 ? 's' : ''}`}
             </button>
             <button className="btn btn-outline" onClick={() => setStage(SETUP_STAGE.QUESTIONS)}>← go back</button>
           </div>

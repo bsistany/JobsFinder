@@ -197,6 +197,20 @@ async def pipeline_setup_refine(request: RefineTitlesRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error refining titles: {str(e)}")
 
+@app.get("/api/pipeline/setup/session")
+async def get_setup_session():
+    return await db.get_advisor_session()
+
+@app.post("/api/pipeline/setup/session")
+async def save_setup_session(payload: dict):
+    await db.save_advisor_session(payload.get("stage", "idle"), payload.get("data", {}))
+    return {"ok": True}
+
+@app.delete("/api/pipeline/setup/session")
+async def clear_setup_session():
+    await db.clear_advisor_session()
+    return {"ok": True}
+
 # ─── NEW: Pipeline — Titles ───────────────────────────────────────────────────
 
 @app.get("/api/pipeline/titles")
