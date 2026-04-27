@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS applications (
 )
 """
 
-async def get_db() -> aiosqlite.Connection:
+async def _connect() -> aiosqlite.Connection:
+    """Open a connection, set row_factory and WAL mode. Always use as async with."""
     db = await aiosqlite.connect(DB_PATH)
     db.row_factory = aiosqlite.Row
     await db.execute("PRAGMA journal_mode=WAL")
@@ -63,13 +64,15 @@ async def init_db():
 # ─── Profile helpers ─────────────────────────────────────────────────────────
 
 async def get_profile() -> dict | None:
-    async with await get_db() as db:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM profile WHERE id = 1") as cursor:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
 async def upsert_profile(intro_text: str, resume_text: str) -> dict:
-    async with await get_db() as db:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute("""
             INSERT INTO profile (id, intro_text, resume_text, updated_at)
             VALUES (1, ?, ?, CURRENT_TIMESTAMP)
@@ -84,14 +87,16 @@ async def upsert_profile(intro_text: str, resume_text: str) -> dict:
 # ─── Job title helpers ────────────────────────────────────────────────────────
 
 async def get_job_titles() -> list[dict]:
-    async with await get_db() as db:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM job_titles ORDER BY added_at DESC") as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
 async def set_job_titles(titles: list[str]) -> list[dict]:
     """Replace all job titles with the provided list."""
-    async with await get_db() as db:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute("DELETE FROM job_titles")
         for title in titles:
             await db.execute(
@@ -101,7 +106,8 @@ async def set_job_titles(titles: list[str]) -> list[dict]:
     return await get_job_titles()
 
 async def add_job_title(title: str) -> list[dict]:
-    async with await get_db() as db:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute(
             "INSERT OR IGNORE INTO job_titles (title) VALUES (?)", (title,)
         )
@@ -109,7 +115,8 @@ async def add_job_title(title: str) -> list[dict]:
     return await get_job_titles()
 
 async def delete_job_title(title_id: int) -> list[dict]:
-    async with await get_db() as db:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute("DELETE FROM job_titles WHERE id = ?", (title_id,))
         await db.commit()
     return await get_job_titles()
@@ -117,7 +124,8 @@ async def delete_job_title(title_id: int) -> list[dict]:
 # ─── Application helpers ──────────────────────────────────────────────────────
 
 async def upsert_application(job: dict) -> None:
-    async with await get_db() as db:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute("""
             INSERT INTO applications
                 (id, title, company, location, description,
@@ -133,7 +141,8 @@ async def upsert_application(job: dict) -> None:
         await db.commit()
 
 async def get_queued_applications() -> list[dict]:
-    async with await get_db() as db:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM applications WHERE status = 'queued' ORDER BY score DESC"
         ) as cursor:
@@ -141,7 +150,8 @@ async def get_queued_applications() -> list[dict]:
             return [dict(r) for r in rows]
 
 async def get_all_applications() -> list[dict]:
-    async with await get_db() as db:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM applications ORDER BY score DESC, created_at DESC"
         ) as cursor:
@@ -149,7 +159,8 @@ async def get_all_applications() -> list[dict]:
             return [dict(r) for r in rows]
 
 async def get_application(job_id: str) -> dict | None:
-    async with await get_db() as db:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM applications WHERE id = ?", (job_id,)
         ) as cursor:
@@ -160,7 +171,8 @@ async def update_application_status(job_id: str, status: str) -> dict | None:
     valid = {"queued", "approved", "rejected", "drafted", "applied", "no_response"}
     if status not in valid:
         raise ValueError(f"Invalid status: {status}")
-    async with await get_db() as db:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute("""
             UPDATE applications
             SET status = ?, updated_at = CURRENT_TIMESTAMP
@@ -170,7 +182,8 @@ async def update_application_status(job_id: str, status: str) -> dict | None:
     return await get_application(job_id)
 
 async def save_generated_docs(job_id: str, resume_notes: str, cover_letter: str) -> dict | None:
-    async with await get_db() as db:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute("""
             UPDATE applications
             SET resume_notes = ?, cover_letter = ?, status = 'drafted',
