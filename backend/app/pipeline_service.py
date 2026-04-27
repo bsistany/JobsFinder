@@ -65,9 +65,12 @@ class PipelineService:
 Analyze the intro document and resume below, then:
 1. Summarize the candidate's background
 2. Suggest 8-12 specific job search titles that would match their profile — vary across:
-   - seniority levels (senior, principal, director, VP, head of)
    - function variants (engineering, architecture, consulting, advisory)
    - industry angles (product security, compliance, governance, risk)
+   - role types (individual contributor, management, leadership)
+   IMPORTANT: Do NOT include seniority qualifiers (Senior, Principal, Director, VP, Head of, Lead) in the titles.
+   Use only the core title (e.g. "Application Security Engineer" not "Senior Application Security Engineer").
+   Seniority is handled separately at the scoring stage.
 3. Ask 2-3 clarifying questions to refine the titles (location preference, role type, industry focus, IC vs management)
 
 Intro document:
@@ -84,7 +87,7 @@ Respond with JSON only, no explanation. Use this exact structure:
     "key_skills": ["up to 8 most relevant skills"]
   }},
   "suggested_titles": [
-    {{ "title": "Exact Job Title To Search", "rationale": "one sentence why this fits" }}
+    {{ "title": "Core Job Title Without Seniority", "rationale": "one sentence why this fits" }}
   ],
   "questions": [
     {{ "id": "q1", "text": "First clarifying question" }},
