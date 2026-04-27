@@ -64,8 +64,11 @@ class PipelineService:
         prompt = f"""You are a career advisor helping a professional find the best-fit job roles.
 Analyze the intro document and resume below, then:
 1. Summarize the candidate's background
-2. Suggest 4-6 specific job search titles that would match their profile
-3. Ask 2-3 clarifying questions to refine the titles (location preference, role type, industry focus)
+2. Suggest 8-12 specific job search titles that would match their profile — vary across:
+   - seniority levels (senior, principal, director, VP, head of)
+   - function variants (engineering, architecture, consulting, advisory)
+   - industry angles (product security, compliance, governance, risk)
+3. Ask 2-3 clarifying questions to refine the titles (location preference, role type, industry focus, IC vs management)
 
 Intro document:
 {intro_trunc}
@@ -85,13 +88,14 @@ Respond with JSON only, no explanation. Use this exact structure:
   ],
   "questions": [
     {{ "id": "q1", "text": "First clarifying question" }},
-    {{ "id": "q2", "text": "Second clarifying question" }}
+    {{ "id": "q2", "text": "Second clarifying question" }},
+    {{ "id": "q3", "text": "Third clarifying question" }}
   ]
 }}"""
 
         response = self.client.chat.completions.create(
             model=self.model,
-            max_tokens=1024,
+            max_tokens=1500,
             messages=[{"role": "user", "content": prompt}]
         )
         raw = _strip_json_fences(response.choices[0].message.content)
