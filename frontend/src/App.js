@@ -50,7 +50,8 @@ function ProfilePage() {
     try {
       await axios.post(`${API}/api/pipeline/profile`, { intro_text: intro, resume_text: resume });
       setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setTimeout(() => setSaved(false), 3000);
     } catch (e) {
       setError(e.response?.data?.detail || 'Save failed.');
     } finally { setSaving(false); }
@@ -93,9 +94,9 @@ function ProfilePage() {
       <button
         className="btn btn-primary"
         onClick={save}
-        disabled={saving || intro.trim().length < 50 || resume.trim().length < 100}
+        disabled={saving || saved || intro.trim().length < 50 || resume.trim().length < 100}
       >
-        {saving ? <><span className="spinner" /> saving…</> : '↳ save profile'}
+        {saving ? <><span className="spinner" /> saving…</> : saved ? '✓ profile saved' : '↳ save profile'}
       </button>
     </div>
   );
@@ -109,9 +110,11 @@ function SetupPage() {
   const [stage, setStage] = useState(SETUP_STAGE.IDLE);
   const [profileData, setProfileData] = useState(null);
   const [suggestedTitles, setSuggestedTitles] = useState([]);
+  const [selectedSuggested, setSelectedSuggested] = useState(new Set());
   const [questions, setQuestions] = useState([]);
   const [answers, setAnswers] = useState({});
   const [finalTitles, setFinalTitles] = useState([]);
+  const [selectedFinal, setSelectedFinal] = useState(new Set());
   const [summary, setSummary] = useState('');
   const [storedTitles, setStoredTitles] = useState([]);
   const [newTitle, setNewTitle] = useState('');
@@ -139,6 +142,7 @@ function SetupPage() {
       });
       setProfileData(r.data.profile);
       setSuggestedTitles(r.data.suggested_titles || []);
+      setSelectedSuggested(new Set((r.data.suggested_titles || []).map((_,i) => i)));
       setQuestions(r.data.questions || []);
       setStage(SETUP_STAGE.QUESTIONS);
     } catch(e) {
@@ -154,11 +158,11 @@ function SetupPage() {
       const profile = await axios.get(`${API}/api/pipeline/profile`);
       const r = await axios.post(`${API}/api/pipeline/setup/refine`, {
         profile: profileData,
-        suggested_titles: suggestedTitles,
+        suggested_titles: suggestedTitles.filter((_,i) => selectedSuggested.has(i)),
         answers: questions.map(q => ({ question_id: q.id, question: q.text, answer: answers[q.id] || '' }))
       });
       setFinalTitles(r.data.titles || []);
-      setSummary(r.data.summary || '');
+      setSelectedFinal(new Set((r.data.titles || []).map((_,i) => i)));
       setStage(SETUP_STAGE.DONE);
     } catch(e) {
       setError(e.response?.data?.detail || 'Refinement failed.');
@@ -169,10 +173,13 @@ function SetupPage() {
   const confirmTitles = async () => {
     setSaving(true);
     try {
-      await axios.post(`${API}/api/pipeline/titles`, { titles: finalTitles });
+      const toSave = finalTitles.filter((_,i) => selectedFinal.has(i));
+      if (toSave.length === 0) { setError('Select at least one title.'); setSaving(false); return; }
+      await axios.post(`${API}/api/pipeline/titles`, { titles: toSave });
       loadTitles();
       setStage(SETUP_STAGE.IDLE);
-      setProfileData(null); setSuggestedTitles([]); setQuestions([]); setAnswers({}); setFinalTitles([]); setSummary('');
+      setProfileData(null); setSuggestedTitles([]); setSelectedSuggested(new Set());
+      setQuestions([]); setAnswers({}); setFinalTitles([]); setSelectedFinal(new Set()); setSummary('');
     } catch(e) {
       setError('Failed to save titles.');
     } finally { setSaving(false); }
@@ -259,13 +266,25 @@ function SetupPage() {
             <p><strong>Key skills:</strong> {profileData?.key_skills?.join(', ')}</p>
           </div>
 
-          <div className="card-title" style={{marginBottom:12}}>suggested titles</div>
-          {suggestedTitles.map((s,i) => (
-            <div key={i} style={{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'var(--radius)',padding:12,marginBottom:8}}>
-              <div style={{fontFamily:'var(--mono)',fontSize:13,color:'var(--text)',marginBottom:3}}>{s.title}</div>
-              <div style={{fontSize:12,color:'var(--text2)'}}>{s.rationale}</div>
-            </div>
-          ))}
+          <div className="card-title" style={{marginBottom:8}}>suggested titles</div>
+          <p style={{fontSize:12,color:'var(--text2)',margin:'0 0 12px'}}>Deselect any titles that don't fit before continuing.</p>
+          {suggestedTitles.map((s,i) => {
+            const on = selectedSuggested.has(i);
+            return (
+              <div key={i} onClick={() => setSelectedSuggested(prev => { const n = new Set(prev); on ? n.delete(i) : n.add(i); return n; })}
+                style={{background: on ? 'var(--bg)' : 'var(--bg3)', border: `1px solid ${on ? 'var(--border2)' : 'var(--border)'}`,
+                  borderRadius:'var(--radius)', padding:12, marginBottom:8, cursor:'pointer',
+                  opacity: on ? 1 : 0.45, transition:'all .15s', display:'flex', alignItems:'flex-start', gap:10}}>
+                <span style={{fontFamily:'var(--mono)',fontSize:14,color: on ? 'var(--green)' : 'var(--text3)',marginTop:1,flexShrink:0}}>
+                  {on ? '✓' : '○'}
+                </span>
+                <div>
+                  <div style={{fontFamily:'var(--mono)',fontSize:13,color:'var(--text)',marginBottom:3}}>{s.title}</div>
+                  <div style={{fontSize:12,color:'var(--text2)'}}>{s.rationale}</div>
+                </div>
+              </div>
+            );
+          })}
 
           <div style={{marginTop:20}} className="card-title">clarifying questions</div>
           <p style={{fontSize:12,color:'var(--text2)',margin:'8px 0 16px'}}>Answer these to refine the final title list:</p>
@@ -297,13 +316,24 @@ function SetupPage() {
       {stage === SETUP_STAGE.DONE && (
         <div className="card">
           <div className="card-title" style={{marginBottom:8}}>final titles</div>
-          <p style={{fontSize:13,color:'var(--text2)',marginBottom:16}}>{summary}</p>
-          {finalTitles.map((t,i) => (
-            <span key={i} className="title-pill">{t}</span>
-          ))}
+          <p style={{fontSize:13,color:'var(--text2)',marginBottom:16}}>Deselect any you don't want before saving.</p>
+          {finalTitles.map((t,i) => {
+            const on = selectedFinal.has(i);
+            return (
+              <div key={i} onClick={() => setSelectedFinal(prev => { const n = new Set(prev); on ? n.delete(i) : n.add(i); return n; })}
+                style={{display:'inline-flex', alignItems:'center', gap:6,
+                  background: on ? 'var(--bg3)' : 'var(--bg)', border: `1px solid ${on ? 'var(--border2)' : 'var(--border)'}`,
+                  borderRadius:4, padding:'5px 10px 5px 10px', fontFamily:'var(--mono)', fontSize:12,
+                  color: on ? 'var(--text2)' : 'var(--text3)', margin:4, cursor:'pointer',
+                  opacity: on ? 1 : 0.4, transition:'all .15s'}}>
+                <span style={{color: on ? 'var(--green)' : 'var(--text3)'}}>{on ? '✓' : '○'}</span>
+                {t}
+              </div>
+            );
+          })}
           <div className="btn-row">
             <button className="btn btn-success" onClick={confirmTitles} disabled={saving}>
-              {saving ? <><span className="spinner"/> saving…</> : '✓ save these titles'}
+              {saving ? <><span className="spinner"/> saving…</> : `✓ save ${[...selectedFinal].length} title${[...selectedFinal].length !== 1 ? 's' : ''}`}
             </button>
             <button className="btn btn-outline" onClick={() => setStage(SETUP_STAGE.QUESTIONS)}>← go back</button>
           </div>
