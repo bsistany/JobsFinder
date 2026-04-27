@@ -6,49 +6,49 @@
 ---
 
 ## Vision
-An AI-powered job search assistant that understands your background, asks the right
-questions, and finds the best opportunities — without the user needing to know exactly
-what to search for.
+A personal job match pipeline: store your profile once, auto-fetch and score jobs from
+Adzuna against your profile, see only ≥70% matches, generate tailored resume notes and
+cover letters on approval, and track applications — all in one tool.
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology | Why |
+| Layer | Technology | Notes |
 |---|---|---|
-| Frontend | React | Industry standard, component-based, scales well |
-| Backend | FastAPI (Python) | Async, AI/ML ecosystem, auto-generates API docs at `/docs` |
-| AI / NLP | Groq API (LLaMA 3.1) | Free tier, fast inference, OpenAI-compatible. Originally Anthropic Claude — swapped due to billing friction. Easy to swap back. |
-| Job Data | Adzuna API | Real Canadian job data, free tier available |
-| Containerization | Docker + docker-compose | Frontend and backend as separate containers |
-| Testing | pytest + pytest-asyncio | Unit tests with mocked API calls — no cost, no network dependency |
+| Frontend | React | IBM Plex Mono/Sans, dark industrial theme |
+| Backend | FastAPI (Python) | Async, auto-docs at `/docs` |
+| AI / NLP | Groq API (llama-3.1-8b-instant) | Free tier. Smart truncation: intro ≤200w, resume ≤400w, JD ≤300w per scoring call |
+| Job Data | Adzuna API | Canadian (`ca`) by default |
+| DB | SQLite via aiosqlite | 3 tables: profile, job_titles, applications |
+| Containerization | Docker + docker-compose | Frontend + backend + postgres (postgres unused, SQLite active) |
 
 ---
 
 ## Project Structure
 
 ```
-job-search-ai/
+JobsFinder/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py              # FastAPI routes
-│   │   ├── claude_service.py    # Groq/LLM calls (parse queries, format responses, advisor)
-│   │   └── adzuna_service.py    # Adzuna job search API calls
+│   │   ├── main.py              # All FastAPI routes (pipeline + existing advisor/search)
+│   │   ├── pipeline_service.py  # NEW — Groq calls for pipeline: analyze, score, generate
+│   │   ├── claude_service.py    # KEPT — Groq calls for Career Advisor tab (untouched)
+│   │   ├── adzuna_service.py    # KEPT — Adzuna job search (untouched)
+│   │   └── database.py         # NEW — SQLite init, helpers for profile/titles/applications
 │   ├── tests/
-│   │   └── test_claude_service.py  # Unit tests (8 tests, all passing)
 │   ├── requirements.txt
 │   ├── Dockerfile
-│   └── .env                     # GROQ_API_KEY, ADZUNA_APP_ID, ADZUNA_APP_KEY (never committed)
+│   └── .env                    # GROQ_API_KEY, ADZUNA_APP_ID, ADZUNA_APP_KEY
 ├── frontend/
 │   ├── src/
-│   │   ├── App.js               # Main React app (JobSearchTab, CareerAdvisorTab, App)
-│   │   └── App.css              # All styles
+│   │   ├── App.js              # Full rebuild — pipeline UI + preserved advisor/search tabs
+│   │   └── App.css             # Dark industrial theme (IBM Plex, monospace)
 │   ├── Dockerfile
 │   └── package.json
 ├── docker-compose.yml
-├── ROADMAP.md                   # This file — persistent memory across sessions
-├── README.md
-└── .gitignore                   # .env, node_modules, __pycache__ excluded
+├── ROADMAP.md
+└── database/                   # SQLite DB mounted here (job_search.db)
 ```
 
 ---
@@ -57,112 +57,105 @@ job-search-ai/
 
 | Decision | Choice | Reason |
 |---|---|---|
-| AI provider | Groq (LLaMA 3.1) | Anthropic billing declined; Groq is free tier, one-line swap back |
-| Model | `llama-3.1-8b-instant` | `llama3-8b-8192` was decommissioned |
-| Job data | Adzuna | Free tier, Canadian coverage, straightforward API |
-| No database yet | — | Not needed until user accounts / saved jobs feature |
-| All AI calls via backend | FastAPI only | API keys never exposed to frontend |
-| Groq class name | `ClaudeService` in `claude_service.py` | Kept name to avoid breaking imports; easy to rename later |
-| Advisor flow | Conversational chat, not rigid form | User needs to correct/challenge AI profile assessment freely |
+| AI provider | Groq (llama-3.1-8b-instant) | Free tier, fast |
+| Scoring truncation | intro ≤200w + resume ≤400w + JD ≤300w | Keeps each scoring call under 1000 tokens, safe on free tier |
+| Profile inputs | intro doc + resume (both text) | User maintains one intro doc + resume, pasted once |
+| Score threshold | 70% hard filter | Sub-70 dropped silently — user only sees qualified leads |
+| Job titles | Stored in DB, advisor-driven setup + manual edit | Run advisor once to bootstrap, manage titles on-demand after |
+| Generation timing | On approval only | Never bulk-generate — one job at a time, user-triggered |
+| Career Advisor tab | Kept untouched | Separate feature for general users; not part of pipeline |
+| DB | SQLite (aiosqlite) | Already in docker-compose, no new infra |
+| Frontend nav | Sidebar with pipeline views + general tabs | Pipeline is primary; advisor/search secondary |
+
+---
+
+## Database Schema
+
+### `profile` (single row, id=1)
+- `id`, `intro_text`, `resume_text`, `updated_at`
+
+### `job_titles`
+- `id`, `title`, `added_at`
+
+### `applications`
+- `id` (Adzuna job id), `title`, `company`, `location`, `description`
+- `salary_min`, `salary_max`, `redirect_url`
+- `score` (0-100), `score_reason`
+- `status`: `queued` → `approved`/`rejected` → `drafted` → `applied`/`no_response`
+- `resume_notes`, `cover_letter`
+- `created_at`, `updated_at`
 
 ---
 
 ## API Endpoints
 
+### Pipeline (new)
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/` | Version and feature info |
-| GET | `/health` | Health check |
-| POST | `/api/chat` | Main chat — Groq parses intent, calls Adzuna, formats response |
-| GET | `/api/jobs/search` | Direct Adzuna job search |
-| POST | `/api/jobs/search` | Direct Adzuna job search (POST) |
-| GET | `/api/jobs/categories` | Adzuna job categories |
-| POST | `/api/advisor/analyze` | Analyze resume text, return profile + clarifying questions |
-| POST | `/api/advisor/chat` | Conversational advisor chat with resume + history context |
+| GET/POST | `/api/pipeline/profile` | Read or upsert intro + resume |
+| POST | `/api/pipeline/setup/analyze` | Advisor analyzes profile, returns suggested titles + questions |
+| POST | `/api/pipeline/setup/refine` | Takes Q&A answers, returns final confirmed title list |
+| GET/POST | `/api/pipeline/titles` | Get or replace full title list |
+| POST | `/api/pipeline/titles/add` | Add one title |
+| DELETE | `/api/pipeline/titles/{id}` | Remove one title |
+| POST | `/api/pipeline/run` | Fetch from Adzuna, score all, persist ≥70% as queued |
+| GET | `/api/pipeline/queue` | Get queued applications |
+| POST | `/api/pipeline/queue/{id}/decide` | approve or reject |
+| POST | `/api/pipeline/generate/{id}` | Generate resume notes + cover letter |
+| GET | `/api/pipeline/tracker` | All applications |
+| PATCH | `/api/pipeline/tracker/{id}/status` | Update status |
+| POST | `/api/pipeline/tracker/{id}/docs` | Save edited docs |
+
+### Preserved (unchanged)
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/chat` | NL job search chat |
+| GET/POST | `/api/jobs/search` | Direct Adzuna search |
+| GET | `/api/jobs/categories` | Adzuna categories |
+| POST | `/api/advisor/analyze` | Career advisor resume analysis |
+| POST | `/api/advisor/suggest` | Career advisor job suggestions |
 
 ---
 
 ## ✅ Completed
 
-### Phase 1 — AI-Powered Natural Language Search
-- Groq (LLaMA 3.1) parses natural language into structured `{what, where}` params
-- Replaces fragile regex parsing — any phrasing now works
-- Unit tests with mocked API calls (5 tests)
+### v0.1–v0.5 (pre-pipeline)
+- NL job search via Groq + Adzuna
+- Career Advisor tab (resume analysis → clarifying questions → job title suggestions)
+- Docker setup, tests
 
-### Phase 2 — Conversational Responses + Frontend Cleanup
-- Groq generates natural conversational summaries of job results
-- Frontend routes all messages through `/api/chat` — no client-side parsing
-- Version string displayed in UI header (`· v0.4.0`)
-- Swapped Anthropic → Groq
-- Unit tests expanded to 8 total
-
-### Career Advisor Phase A — Resume Input UI
-- Tabbed UI: 🔍 Job Search | 🎯 Career Advisor
-- Career Advisor tab: paste resume text or upload PDF (upload UI only — parsing in Phase B)
-- App.js refactored into `JobSearchTab`, `CareerAdvisorTab`, `App` components
-
-### Career Advisor Phase B (partial) — Resume Analysis
-- New backend endpoint `POST /api/advisor/analyze` — returns candidate profile + clarifying questions
-- New backend endpoint `POST /api/advisor/suggest` — returns job title suggestions based on profile + answers
-- Multi-stage frontend flow: Input → Analyzing → Questions → Suggesting → Ready
-- Version bumped to `0.5.0`
+### v0.6.0 — Personal Job Match Pipeline
+- `database.py` — SQLite init, profile/titles/applications helpers
+- `pipeline_service.py` — Groq scoring, advisor-driven title analysis, doc generation
+- `main.py` — all pipeline routes added, existing routes preserved
+- `App.js` — full rebuild: sidebar nav, Profile, Setup, Pipeline, Tracker views
+- `App.css` — dark industrial theme with IBM Plex Mono/Sans
 
 ---
 
-## 🔜 In Progress
+## 🔜 Planned
 
-### Career Advisor Phase B (revised) — Conversational Advisor Chat
-Replacing the rigid questions form with a free-form chat interface after resume analysis.
+### v0.7 — Quality of Life
+- [ ] PDF upload support (parse resume from PDF)
+- [ ] Pagination in pipeline run (fetch more than 10/title)
+- [ ] Re-score existing queued jobs against updated profile
+- [ ] Pipeline run history (when did last run happen, how many found)
+- [ ] Email / export tracker to CSV
 
-**Why the change:** Initial profile assessment can be wrong (e.g. misidentified experience level).
-User needs to be able to challenge, correct, and refine the profile conversationally before searching.
-
-**New flow:**
-```
-Resume input
-    ↓
-AI analyzes → profile summary shown (scrollable, pinned at top)
-    ↓
-Chat window opens below (like Job Search tab)
-    ↓
-User chats freely:
-  - "why did you say intermediate? I have 20 years experience"
-  - "change location to remote"
-  - "looks good, find my jobs now"
-    ↓
-AI responds, updates profile if needed
-AI detects "find jobs" intent → triggers job title suggestions automatically
-```
-
-**Implementation plan:**
-- [ ] New `POST /api/advisor/chat` endpoint — accepts resume text + conversation history + latest message
-- [ ] New `advisor_chat()` method in `claude_service.py` — handles profile updates, Q&A, and intent detection
-- [ ] Frontend: replace rigid stage form with pinned profile summary + chat window
-- [ ] Remove `/api/advisor/suggest` endpoint (absorbed into advisor chat flow)
-- [ ] AI detects "ready to search" intent and returns structured job suggestions in same response
-
----
-
-## 📋 Planned
-
-### Career Advisor Phase C — Multi-Search + Combined Results
-- Backend runs parallel Adzuna searches for each suggested job title
-- Combined deduplicated results grouped by job category
-- Conversational presentation with resume context
-
-### Phase 4 — Cover Letter Builder
-- User selects a job from results
-- Groq generates a tailored cover letter using job description + resume
-- Editable in UI before copying or downloading
+### v0.8 — Enhancements
+- [ ] Batch approve with one click
+- [ ] Notes field per application (free text)
+- [ ] Interview stage tracking
 
 ---
 
 ## 🐛 Known Issues
 
 ### KI-001: No conversational context in Job Search tab
-**Status:** Open — will be addressed after Career Advisor chat is built (same pattern)
-**Description:** Follow-up messages lose prior search context.
-**Example:** Search "cybersecurity jobs in Ottawa" → "how about remote instead?" loses the job title.
+**Status:** Open — chat tab loses context between messages.
+
+### KI-002: Adzuna description truncated at 500 chars
+**Status:** By design in adzuna_service.py — sufficient for scoring, may miss nuance.
 
 ---
 
@@ -170,17 +163,25 @@ AI detects "find jobs" intent → triggers job title suggestions automatically
 
 ```bash
 # Start
-docker-compose up
+docker compose up
 
-# Start with rebuild (after dependency changes)
-docker-compose down && docker-compose up --build
+# Rebuild after code changes
+docker compose down && docker compose up --build
 
 # Run tests
-docker-compose exec backend pytest tests/
+docker compose exec backend pytest tests/
 
-# View API docs
+# API docs
 open http://localhost:8000/docs
 
-# View app
+# App
 open http://localhost:3000
 ```
+
+## First-Run Checklist
+
+1. Open app → **Profile** → paste your intro doc + resume → Save
+2. Open **Search Setup** → click "run advisor" → answer questions → confirm titles
+3. Open **Pipeline** → click "run now" → review queue → approve jobs you want
+4. Click "generate docs" on any approved job → edit notes + cover letter → save
+5. Open **Tracker** → update status as you apply
