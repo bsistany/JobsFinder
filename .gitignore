@@ -38,3 +38,4 @@ database/*.sqlite
 
 # zip files
 *.zip
+*.bak
