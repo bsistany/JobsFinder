@@ -152,11 +152,17 @@ Respond with JSON only:
 
         response = self.client.chat.completions.create(
             model=self.model,
-            max_tokens=512,
+            max_tokens=1024,
             messages=[{"role": "user", "content": prompt}]
         )
         raw = _strip_json_fences(response.choices[0].message.content)
-        return json.loads(raw)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            # Truncated response — extract whatever titles parsed cleanly
+            import re
+            titles = re.findall(r'"([^"]+)"', raw.split('"titles"')[-1])
+            return {"titles": titles, "summary": "Titles extracted from partial response."}
 
     # ─── Scoring ──────────────────────────────────────────────────────────────
 
