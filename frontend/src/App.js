@@ -515,10 +515,13 @@ function PipelinePage() {
       </div>
 
       {/* Queue */}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
         <div className="card-title">approval queue <span style={{color:'var(--text3)',fontWeight:400}}>({queue.length})</span></div>
         <button className="btn btn-outline btn-sm" onClick={loadQueue}>↻ refresh</button>
       </div>
+      <p style={{fontSize:11,color:'var(--text3)',fontFamily:'var(--mono)',marginBottom:12}}>
+        ⚠ job postings may have expired — "view ↗" links may show an Adzuna fallback page
+      </p>
 
       {loadingQueue && <div className="empty-state"><div className="spinner"/></div>}
 
@@ -540,8 +543,9 @@ function PipelinePage() {
               <ScoreBadge score={job.score} />
               {job.redirect_url && (
                 <a href={job.redirect_url} target="_blank" rel="noopener noreferrer"
+                   title="Job postings may have expired — Adzuna may show a 'jobs like this' page instead"
                    style={{fontSize:11,color:'var(--text3)',fontFamily:'var(--mono)'}}>
-                  view ↗
+                  view ↗ ⚠
                 </a>
               )}
             </div>
