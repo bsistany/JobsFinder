@@ -26,11 +26,105 @@ function CopyBtn({ text }) {
   return <button className="copy-btn" onClick={copy}>{copied ? '✓ copied' : 'copy'}</button>;
 }
 
+// ─── File upload helper ───────────────────────────────────────────────────────
+
+function FileUploadBtn({ onLoad, label }) {
+  const ref = React.useRef();
+  const handle = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => onLoad(ev.target.result, file.name);
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+  return (
+    <>
+      <input type="file" accept=".txt,.md" ref={ref} onChange={handle} style={{display:'none'}} />
+      <button className="btn btn-outline btn-sm" onClick={() => ref.current.click()}>
+        📄 {label || 'load file'}
+      </button>
+    </>
+  );
+}
+
+// ─── Location tier editor ─────────────────────────────────────────────────────
+
+function LocationTier({ label, value, onChange, color }) {
+  const [input, setInput] = useState('');
+  const items = value ? value.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+  const add = () => {
+    const v = input.trim();
+    if (!v || items.includes(v)) return;
+    onChange([...items, v].join(','));
+    setInput('');
+  };
+
+  const remove = (item) => onChange(items.filter(i => i !== item).join(','));
+
+  return (
+    <div style={{marginBottom:16}}>
+      <div style={{fontFamily:'var(--mono)',fontSize:11,color,textTransform:'uppercase',
+        letterSpacing:'.08em',marginBottom:8}}>{label}</div>
+      <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:8}}>
+        {items.map(item => (
+          <span key={item} className="title-pill" style={{borderColor:color,color}}>
+            {item}
+            <button className="title-pill-del" onClick={() => remove(item)}>×</button>
+          </span>
+        ))}
+        {items.length === 0 && (
+          <span style={{fontSize:12,color:'var(--text3)',fontFamily:'var(--mono)'}}>none</span>
+        )}
+      </div>
+      <div style={{display:'flex',gap:8}}>
+        <input type="text" value={input} onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && add()}
+          placeholder={`Add ${label.toLowerCase()} location…`}
+          style={{flex:1,fontSize:12}} />
+        <button className="btn btn-outline btn-sm" onClick={add} disabled={!input.trim()}>+ add</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Document field ───────────────────────────────────────────────────────────
+
+function DocField({ title, subtitle, value, onChange, rows, placeholder, required, fileName, onFileLoad }) {
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div>
+          <div className="card-title">{title}</div>
+          {subtitle && <div style={{fontSize:12,color:'var(--text2)',marginTop:2}}>{subtitle}</div>}
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          {fileName && <span style={{fontSize:11,fontFamily:'var(--mono)',color:'var(--text3)'}}>{fileName}</span>}
+          <FileUploadBtn onLoad={onFileLoad} label="load .txt" />
+        </div>
+      </div>
+      <textarea value={value} onChange={e => onChange(e.target.value)}
+        rows={rows || 10} placeholder={placeholder} />
+      {required && value.trim().length > 0 && value.trim().length < required && (
+        <div style={{fontSize:11,color:'var(--amber)',marginTop:4,fontFamily:'var(--mono)'}}>
+          ⚠ too short (min {required} chars)
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Profile Page ─────────────────────────────────────────────────────────────
 
 function ProfilePage() {
   const [intro, setIntro] = useState('');
   const [resume, setResume] = useState('');
+  const [themes, setThemes] = useState('');
+  const [locPreferred, setLocPreferred] = useState('Remote');
+  const [locAcceptable, setLocAcceptable] = useState('');
+  const [locExcluded, setLocExcluded] = useState('');
+  const [fileNames, setFileNames] = useState({});
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -39,8 +133,13 @@ function ProfilePage() {
   useEffect(() => {
     axios.get(`${API}/api/pipeline/profile`).then(r => {
       if (r.data.profile) {
-        setIntro(r.data.profile.intro_text || '');
-        setResume(r.data.profile.resume_text || '');
+        const p = r.data.profile;
+        setIntro(p.intro_text || '');
+        setResume(p.resume_text || '');
+        setThemes(p.themes_text || '');
+        setLocPreferred(p.locations_preferred || 'Remote');
+        setLocAcceptable(p.locations_acceptable || '');
+        setLocExcluded(p.locations_excluded || '');
       }
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
@@ -48,7 +147,14 @@ function ProfilePage() {
   const save = async () => {
     setError(''); setSaving(true);
     try {
-      await axios.post(`${API}/api/pipeline/profile`, { intro_text: intro, resume_text: resume });
+      await axios.post(`${API}/api/pipeline/profile`, {
+        intro_text: intro,
+        resume_text: resume,
+        themes_text: themes,
+        locations_preferred: locPreferred,
+        locations_acceptable: locAcceptable,
+        locations_excluded: locExcluded,
+      });
       setSaved(true);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       setTimeout(() => setSaved(false), 3000);
@@ -57,45 +163,62 @@ function ProfilePage() {
     } finally { setSaving(false); }
   };
 
+  const handleFileLoad = (field) => (content, name) => {
+    if (field === 'intro') setIntro(content);
+    if (field === 'resume') setResume(content);
+    if (field === 'themes') setThemes(content);
+    setFileNames(f => ({...f, [field]: name}));
+  };
+
   if (loading) return <div className="empty-state"><div className="spinner" /></div>;
+
+  const canSave = intro.trim().length >= 50 && resume.trim().length >= 100;
 
   return (
     <div>
       <div className="page-header">
         <div className="page-title">profile</div>
-        <div className="page-subtitle">Your intro document and resume — stored once, used by every pipeline run.</div>
+        <div className="page-subtitle">Your documents and preferences — stored once, used by every pipeline run.</div>
       </div>
 
       {saved && <div className="alert alert-ok">✓ Profile saved.</div>}
       {error && <div className="alert alert-error">{error}</div>}
 
-      <div className="card">
-        <div className="card-title" style={{marginBottom:12}}>intro document</div>
-        <label>Who you are and what you're looking for</label>
-        <textarea
-          value={intro}
-          onChange={e => setIntro(e.target.value)}
-          rows={10}
-          placeholder="Paste your intro document here..."
-        />
-      </div>
+      <DocField
+        title="intro document" subtitle="Who you are and what you're looking for"
+        value={intro} onChange={setIntro} rows={10}
+        placeholder="Paste or load your intro document…"
+        required={50} fileName={fileNames.intro}
+        onFileLoad={handleFileLoad('intro')}
+      />
+
+      <DocField
+        title="resume" subtitle="Your current resume"
+        value={resume} onChange={setResume} rows={14}
+        placeholder="Paste or load your resume…"
+        required={100} fileName={fileNames.resume}
+        onFileLoad={handleFileLoad('resume')}
+      />
+
+      <DocField
+        title="career narrative" subtitle="Optional — paste NotebookLM output or any summary of your career themes, voice, and emphasis patterns"
+        value={themes} onChange={setThemes} rows={8}
+        placeholder="Paste or load your career narrative… (optional)"
+        fileName={fileNames.themes}
+        onFileLoad={handleFileLoad('themes')}
+      />
 
       <div className="card">
-        <div className="card-title" style={{marginBottom:12}}>resume</div>
-        <label>Your current resume (text)</label>
-        <textarea
-          value={resume}
-          onChange={e => setResume(e.target.value)}
-          rows={14}
-          placeholder="Paste your resume text here..."
-        />
+        <div className="card-title" style={{marginBottom:4}}>location preferences</div>
+        <p style={{fontSize:12,color:'var(--text2)',marginBottom:16}}>
+          Used during scoring — preferred locations score higher, excluded locations are penalized.
+        </p>
+        <LocationTier label="Preferred" value={locPreferred} onChange={setLocPreferred} color="var(--green)" />
+        <LocationTier label="Acceptable" value={locAcceptable} onChange={setLocAcceptable} color="var(--amber)" />
+        <LocationTier label="Excluded" value={locExcluded} onChange={setLocExcluded} color="var(--red)" />
       </div>
 
-      <button
-        className="btn btn-primary"
-        onClick={save}
-        disabled={saving || saved || intro.trim().length < 50 || resume.trim().length < 100}
-      >
+      <button className="btn btn-primary" onClick={save} disabled={saving || saved || !canSave}>
         {saving ? <><span className="spinner" /> saving…</> : saved ? '✓ profile saved' : '↳ save profile'}
       </button>
     </div>
