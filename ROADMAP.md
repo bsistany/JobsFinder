@@ -18,10 +18,10 @@ cover letters on approval, and track applications — all in one tool.
 |---|---|---|
 | Frontend | React | IBM Plex Mono/Sans, dark industrial theme |
 | Backend | FastAPI (Python) | Async, auto-docs at `/docs` |
-| AI / NLP | Groq API (llama-3.1-8b-instant) | Free tier. Smart truncation: intro ≤200w, resume ≤400w, JD ≤300w per scoring call |
+| AI / NLP | Groq API (llama-3.1-8b-instant) | Free tier. Smart truncation per call (see scoring notes) |
 | Job Data | Adzuna API | Canadian (`ca`) by default |
-| DB | SQLite via aiosqlite | 3 tables: profile, job_titles, applications |
-| Containerization | Docker + docker-compose | Frontend + backend + postgres (postgres unused, SQLite active) |
+| DB | SQLite via aiosqlite | 4 tables: profile, job_titles, applications, advisor_session |
+| Containerization | Docker + docker-compose | Frontend + backend, SQLite mounted as volume |
 
 ---
 
@@ -32,22 +32,26 @@ JobsFinder/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py              # All FastAPI routes (pipeline + existing advisor/search)
-│   │   ├── pipeline_service.py  # NEW — Groq calls for pipeline: analyze, score, generate
+│   │   ├── pipeline_service.py  # Groq calls: analyze, score, generate docs
 │   │   ├── claude_service.py    # KEPT — Groq calls for Career Advisor tab (untouched)
 │   │   ├── adzuna_service.py    # KEPT — Adzuna job search (untouched)
-│   │   └── database.py         # NEW — SQLite init, helpers for profile/titles/applications
+│   │   └── database.py         # SQLite init, migration, all DB helpers
 │   ├── tests/
 │   ├── requirements.txt
 │   ├── Dockerfile
 │   └── .env                    # GROQ_API_KEY, ADZUNA_APP_ID, ADZUNA_APP_KEY
 ├── frontend/
 │   ├── src/
-│   │   ├── App.js              # Full rebuild — pipeline UI + preserved advisor/search tabs
-│   │   └── App.css             # Dark industrial theme (IBM Plex, monospace)
+│   │   ├── App.js              # Full pipeline UI + preserved advisor/search tabs
+│   │   └── App.css             # Dark industrial theme (IBM Plex Mono/Sans)
 │   ├── Dockerfile
 │   └── package.json
 ├── docker-compose.yml
 ├── ROADMAP.md
+├── my_docs/                    # gitignored — local private documents
+│   ├── Bahman-Sistany-Intro.txt
+│   ├── Bahman-Sistany-resume-2026-V04.txt
+│   └── cover_letter_themes.txt (planned)
 └── database/                   # SQLite DB mounted here (job_search.db)
 ```
 
@@ -58,13 +62,16 @@ JobsFinder/
 | Decision | Choice | Reason |
 |---|---|---|
 | AI provider | Groq (llama-3.1-8b-instant) | Free tier, fast |
-| Scoring truncation | intro ≤200w + resume ≤400w + JD ≤300w | Keeps each scoring call under 1000 tokens, safe on free tier |
-| Profile inputs | intro doc + resume (both text) | User maintains one intro doc + resume, pasted once |
+| Scoring truncation | intro ≤180w + resume ≤350w + JD ≤280w + themes ≤80w | Keeps scoring calls under 1000 tokens |
+| Profile inputs | intro + resume + career narrative + location prefs | File upload or paste; all stored in DB |
 | Score threshold | 70% hard filter | Sub-70 dropped silently — user only sees qualified leads |
-| Job titles | Stored in DB, advisor-driven setup + manual edit | Run advisor once to bootstrap, manage titles on-demand after |
+| Location scoring | preferred/acceptable/excluded tiers | 20% of score; Remote always preferred unless excluded |
+| Career narrative | Optional third doc from NotebookLM analysis | Improves voice matching in cover letter generation |
+| Job titles | Stored in DB, advisor-driven setup + manual edit | Run advisor once to bootstrap, manage on-demand after |
+| Advisor session | Persisted to DB | Setup state survives navigation and page refresh |
 | Generation timing | On approval only | Never bulk-generate — one job at a time, user-triggered |
 | Career Advisor tab | Kept untouched | Separate feature for general users; not part of pipeline |
-| DB | SQLite (aiosqlite) | Already in docker-compose, no new infra |
+| DB | SQLite (aiosqlite) | Already in docker-compose, no new infra needed |
 | Frontend nav | Sidebar with pipeline views + general tabs | Pipeline is primary; advisor/search secondary |
 
 ---
@@ -72,7 +79,11 @@ JobsFinder/
 ## Database Schema
 
 ### `profile` (single row, id=1)
-- `id`, `intro_text`, `resume_text`, `updated_at`
+- `id`, `intro_text`, `resume_text`, `themes_text`
+- `locations_preferred` (comma-sep, default: `Remote`)
+- `locations_acceptable` (comma-sep)
+- `locations_excluded` (comma-sep)
+- `updated_at`
 
 ### `job_titles`
 - `id`, `title`, `added_at`
@@ -85,16 +96,21 @@ JobsFinder/
 - `resume_notes`, `cover_letter`
 - `created_at`, `updated_at`
 
+### `advisor_session` (single row, id=1)
+- `id`, `stage`, `data` (JSON blob), `updated_at`
+- Persists setup flow state across navigation
+
 ---
 
 ## API Endpoints
 
-### Pipeline (new)
+### Pipeline
 | Method | Endpoint | Description |
 |---|---|---|
-| GET/POST | `/api/pipeline/profile` | Read or upsert intro + resume |
+| GET/POST | `/api/pipeline/profile` | Read or upsert full profile |
 | POST | `/api/pipeline/setup/analyze` | Advisor analyzes profile, returns suggested titles + questions |
 | POST | `/api/pipeline/setup/refine` | Takes Q&A answers, returns final confirmed title list |
+| GET/POST/DELETE | `/api/pipeline/setup/session` | Persist/restore/clear advisor session |
 | GET/POST | `/api/pipeline/titles` | Get or replace full title list |
 | POST | `/api/pipeline/titles/add` | Add one title |
 | DELETE | `/api/pipeline/titles/{id}` | Remove one title |
@@ -131,21 +147,27 @@ JobsFinder/
 - `App.js` — full rebuild: sidebar nav, Profile, Setup, Pipeline, Tracker views
 - `App.css` — dark industrial theme with IBM Plex Mono/Sans
 
+### v0.7.0 — Profile Enrichment + Location Filtering
+- `database.py` — added `themes_text`, `locations_preferred/acceptable/excluded` to profile; `advisor_session` table; safe ALTER TABLE migration
+- `pipeline_service.py` — location penalty in scoring (20% weight); themes context in scoring, resume notes, cover letter
+- `main.py` — profile API accepts all new fields; generation passes themes; scoring passes location + themes
+- `App.js` — file upload for all doc fields; career narrative field; structured location tier editor (pills); advisor session persisted to DB
+
 ---
 
 ## 🔜 Planned
 
-### v0.7 — Quality of Life
-- [ ] PDF upload support (parse resume from PDF)
+### v0.8 — Pipeline Quality
 - [ ] Pagination in pipeline run (fetch more than 10/title)
-- [ ] Re-score existing queued jobs against updated profile
-- [ ] Pipeline run history (when did last run happen, how many found)
-- [ ] Email / export tracker to CSV
-
-### v0.8 — Enhancements
+- [ ] Re-score existing queued jobs when profile changes
+- [ ] Pipeline run history (timestamp, counts per run)
+- [ ] Export tracker to CSV
 - [ ] Batch approve with one click
-- [ ] Notes field per application (free text)
+
+### v0.9 — Content Quality
+- [ ] Notes field per application (free text, interview prep)
 - [ ] Interview stage tracking
+- [ ] PDF upload support (parse resume/intro from PDF directly)
 
 ---
 
@@ -157,6 +179,9 @@ JobsFinder/
 ### KI-002: Adzuna description truncated at 500 chars
 **Status:** By design in adzuna_service.py — sufficient for scoring, may miss nuance.
 
+### KI-003: Adzuna email popup on job view
+**Status:** Known — click "No Thanks" to proceed to the posting. Warning shown in UI.
+
 ---
 
 ## Running the App
@@ -165,8 +190,11 @@ JobsFinder/
 # Start
 docker compose up
 
-# Rebuild after code changes
+# Rebuild after code changes (requirements.txt, Dockerfile, package.json)
 docker compose down && docker compose up --build
+
+# Restart backend only (after .py file changes if hot-reload missed)
+docker compose restart backend
 
 # Run tests
 docker compose exec backend pytest tests/
@@ -178,10 +206,29 @@ open http://localhost:8000/docs
 open http://localhost:3000
 ```
 
+## When to rebuild vs reload
+
+| Change type | Action needed |
+|---|---|
+| `.py` files | Auto hot-reload (uvicorn watches) |
+| `.js` / `.css` files | Auto hot-reload (webpack watches) |
+| `requirements.txt` | `docker compose up --build` |
+| `Dockerfile` | `docker compose up --build` |
+| `package.json` | `docker compose up --build` |
+| New DB columns | `docker compose restart backend` (migration runs on startup) |
+
 ## First-Run Checklist
 
-1. Open app → **Profile** → paste your intro doc + resume → Save
-2. Open **Search Setup** → click "run advisor" → answer questions → confirm titles
-3. Open **Pipeline** → click "run now" → review queue → approve jobs you want
-4. Click "generate docs" on any approved job → edit notes + cover letter → save
-5. Open **Tracker** → update status as you apply
+1. **Profile** → load or paste intro doc + resume → set location preferences → Save
+2. **Search Setup** → run advisor → deselect irrelevant titles → answer questions → confirm
+3. **Pipeline** → run now → review queue → approve or generate docs directly
+4. **Tracker** → update status as you progress through applications
+
+## my_docs/ contents (gitignored)
+
+```
+my_docs/
+├── Bahman-Sistany-Intro.txt           # intro document
+├── Bahman-Sistany-resume-2026-V04.txt # current resume
+└── cover_letter_themes.txt            # planned — NotebookLM output from past cover letters
+```
