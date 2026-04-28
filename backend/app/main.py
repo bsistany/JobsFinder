@@ -55,6 +55,10 @@ class JobSuggestionsRequest(BaseModel):
 class ProfileUpsert(BaseModel):
     intro_text: str
     resume_text: str
+    themes_text: Optional[str] = ''
+    locations_preferred: Optional[str] = 'Remote'
+    locations_acceptable: Optional[str] = ''
+    locations_excluded: Optional[str] = ''
 
 class AnalyzeProfileRequest(BaseModel):
     intro_text: str
@@ -171,7 +175,14 @@ async def save_profile(request: ProfileUpsert):
         raise HTTPException(status_code=400, detail="Intro text too short (min 50 chars).")
     if len(request.resume_text.strip()) < 100:
         raise HTTPException(status_code=400, detail="Resume text too short (min 100 chars).")
-    return {"profile": await db.upsert_profile(request.intro_text, request.resume_text)}
+    return {"profile": await db.upsert_profile(
+        intro_text=request.intro_text,
+        resume_text=request.resume_text,
+        themes_text=request.themes_text or '',
+        locations_preferred=request.locations_preferred or 'Remote',
+        locations_acceptable=request.locations_acceptable or '',
+        locations_excluded=request.locations_excluded or '',
+    )}
 
 # ─── NEW: Pipeline — Setup ────────────────────────────────────────────────────
 
@@ -261,7 +272,12 @@ async def run_pipeline(request: PipelineRunRequest):
             try:
                 score_result = await pipeline_service.score_job(
                     intro_text=intro_text, resume_text=resume_text,
-                    job_title=job["title"], job_description=job.get("description", "")
+                    job_title=job["title"], job_description=job.get("description", ""),
+                    job_location=job.get("location", ""),
+                    themes_text=profile.get("themes_text", ""),
+                    locations_preferred=profile.get("locations_preferred", "Remote"),
+                    locations_acceptable=profile.get("locations_acceptable", ""),
+                    locations_excluded=profile.get("locations_excluded", ""),
                 )
             except Exception as e:
                 errors.append(f"Scoring '{job['title']}': {str(e)}")
@@ -312,11 +328,14 @@ async def generate_docs(job_id: str):
     try:
         notes = await pipeline_service.generate_resume_notes(
             intro_text=profile["intro_text"], resume_text=profile["resume_text"],
-            job_title=job["title"], job_description=job.get("description", "")
+            job_title=job["title"], job_description=job.get("description", ""),
+            themes_text=profile.get("themes_text", ""),
         )
         cover_letter = await pipeline_service.generate_cover_letter(
             intro_text=profile["intro_text"], resume_text=profile["resume_text"],
-            job_title=job["title"], company=job["company"], job_description=job.get("description", "")
+            job_title=job["title"], company=job["company"],
+            job_description=job.get("description", ""),
+            themes_text=profile.get("themes_text", ""),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Generation error: {str(e)}")
