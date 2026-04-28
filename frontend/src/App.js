@@ -520,7 +520,7 @@ function PipelinePage() {
         <button className="btn btn-outline btn-sm" onClick={loadQueue}>↻ refresh</button>
       </div>
       <p style={{fontSize:11,color:'var(--text3)',fontFamily:'var(--mono)',marginBottom:12}}>
-        ⚠ job postings may have expired — "view ↗" links may show an Adzuna fallback page
+        ⚠ Adzuna may show an email signup popup — click "No Thanks" to proceed to the job posting
       </p>
 
       {loadingQueue && <div className="empty-state"><div className="spinner"/></div>}
@@ -543,7 +543,7 @@ function PipelinePage() {
               <ScoreBadge score={job.score} />
               {job.redirect_url && (
                 <a href={job.redirect_url} target="_blank" rel="noopener noreferrer"
-                   title="Job postings may have expired — Adzuna may show a 'jobs like this' page instead"
+                   title="Adzuna may show an email signup popup — click No Thanks to see the job"
                    style={{fontSize:11,color:'var(--text3)',fontFamily:'var(--mono)'}}>
                   view ↗ ⚠
                 </a>
