@@ -171,34 +171,62 @@ Respond with JSON only:
         intro_text: str,
         resume_text: str,
         job_title: str,
-        job_description: str
+        job_description: str,
+        job_location: str = '',
+        themes_text: str = '',
+        locations_preferred: str = 'Remote',
+        locations_acceptable: str = '',
+        locations_excluded: str = '',
     ) -> dict:
         """
         Score a single job against the user's profile.
-        Kept lean: intro ≤200w, resume ≤400w, JD ≤300w → stays under 1000 tokens.
+        Truncation budget: intro ≤180w, resume ≤350w, JD ≤280w, themes ≤80w → ~1000 tokens.
 
         Returns: { "score": int 0-100, "reason": str ≤20 words }
         """
-        intro_trunc = _truncate(intro_text, 200)
-        resume_trunc = _truncate(resume_text, 400)
-        jd_trunc = _truncate(job_description, 300)
+        intro_trunc = _truncate(intro_text, 180)
+        resume_trunc = _truncate(resume_text, 350)
+        jd_trunc = _truncate(job_description, 280)
+        themes_trunc = _truncate(themes_text, 80) if themes_text.strip() else ''
+
+        # Build location context block
+        loc_lines = []
+        if locations_preferred:
+            loc_lines.append(f"Preferred: {locations_preferred}")
+        if locations_acceptable:
+            loc_lines.append(f"Acceptable: {locations_acceptable}")
+        if locations_excluded:
+            loc_lines.append(f"Excluded (hard penalty): {locations_excluded}")
+        location_context = "\n".join(loc_lines) if loc_lines else "No preference specified"
+
+        themes_block = f"\nCandidate career narrative (voice/emphasis patterns):\n{themes_trunc}" if themes_trunc else ''
 
         prompt = f"""Score how well this job matches the candidate. Return JSON only.
 
 Candidate intro:
 {intro_trunc}
 
-Candidate resume summary:
-{resume_trunc}
+Candidate resume:
+{resume_trunc}{themes_block}
 
 Job title: {job_title}
+Job location: {job_location or 'Not specified'}
 Job description:
 {jd_trunc}
 
-Scoring criteria:
-- Skills match (40%): how well candidate's skills match the JD requirements
-- Experience level match (30%): seniority and years align
-- Role alignment (30%): matches what candidate is targeting per their intro
+Candidate location preferences:
+{location_context}
+
+Scoring criteria (total 100):
+- Skills match (40%): how well candidate skills match JD requirements
+- Experience level (30%): seniority and years align
+- Role alignment (10%): matches candidate's target per their intro
+- Location match (20%):
+    * Job is in a Preferred location or is Remote → full 20 points
+    * Job is in an Acceptable location → 15 points
+    * Location not listed → 10 points (neutral)
+    * Job is in an Excluded location → 0 points
+    * If job offers Remote option, treat as Preferred regardless of city
 
 Return JSON only, no explanation:
 {{
@@ -223,7 +251,8 @@ Return JSON only, no explanation:
         intro_text: str,
         resume_text: str,
         job_title: str,
-        job_description: str
+        job_description: str,
+        themes_text: str = '',
     ) -> list[str]:
         """
         Generate 5 bullet points to tailor the user's resume for this specific job.
@@ -232,6 +261,8 @@ Return JSON only, no explanation:
         intro_trunc = _truncate(intro_text, 200)
         resume_trunc = _truncate(resume_text, 400)
         jd_trunc = _truncate(job_description, 400)
+        themes_trunc = _truncate(themes_text, 100) if themes_text.strip() else ''
+        themes_block = f"\nCareer narrative (emphasis patterns to preserve):\n{themes_trunc}" if themes_trunc else ''
 
         prompt = f"""You are a professional resume coach. Generate specific, actionable bullet points
 to help the candidate tailor their resume for this job.
@@ -240,7 +271,7 @@ Candidate intro:
 {intro_trunc}
 
 Candidate resume:
-{resume_trunc}
+{resume_trunc}{themes_block}
 
 Target job: {job_title}
 Job description:
@@ -275,7 +306,8 @@ and connect them to specific requirements in the JD."""
         resume_text: str,
         job_title: str,
         company: str,
-        job_description: str
+        job_description: str,
+        themes_text: str = '',
     ) -> str:
         """
         Generate a tailored cover letter draft. Returns plain text.
@@ -283,6 +315,8 @@ and connect them to specific requirements in the JD."""
         intro_trunc = _truncate(intro_text, 200)
         resume_trunc = _truncate(resume_text, 400)
         jd_trunc = _truncate(job_description, 400)
+        themes_trunc = _truncate(themes_text, 120) if themes_text.strip() else ''
+        themes_block = f"\nCareer narrative (mirror this voice, tone and emphasis in the letter):\n{themes_trunc}" if themes_trunc else ''
 
         prompt = f"""Write a tailored professional cover letter for this job application.
 
@@ -290,7 +324,7 @@ Candidate intro:
 {intro_trunc}
 
 Candidate resume:
-{resume_trunc}
+{resume_trunc}{themes_block}
 
 Job title: {job_title}
 Company: {company}
