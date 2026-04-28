@@ -12,9 +12,20 @@ CREATE TABLE IF NOT EXISTS profile (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     intro_text TEXT NOT NULL DEFAULT '',
     resume_text TEXT NOT NULL DEFAULT '',
+    themes_text TEXT NOT NULL DEFAULT '',
+    locations_preferred TEXT NOT NULL DEFAULT 'Remote',
+    locations_acceptable TEXT NOT NULL DEFAULT '',
+    locations_excluded TEXT NOT NULL DEFAULT '',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """
+
+MIGRATE_PROFILE_V2 = [
+    "ALTER TABLE profile ADD COLUMN themes_text TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE profile ADD COLUMN locations_preferred TEXT NOT NULL DEFAULT 'Remote'",
+    "ALTER TABLE profile ADD COLUMN locations_acceptable TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE profile ADD COLUMN locations_excluded TEXT NOT NULL DEFAULT ''",
+]
 
 CREATE_JOB_TITLES_TABLE = """
 CREATE TABLE IF NOT EXISTS job_titles (
@@ -69,6 +80,12 @@ async def init_db():
         await db.execute(CREATE_JOB_TITLES_TABLE)
         await db.execute(CREATE_APPLICATIONS_TABLE)
         await db.execute(CREATE_ADVISOR_SESSION_TABLE)
+        # v0.7.0 migration — add new columns if they don't exist yet
+        for sql in MIGRATE_PROFILE_V2:
+            try:
+                await db.execute(sql)
+            except Exception:
+                pass  # column already exists
         await db.commit()
 
 # ─── Profile helpers ─────────────────────────────────────────────────────────
@@ -80,17 +97,30 @@ async def get_profile() -> dict | None:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
-async def upsert_profile(intro_text: str, resume_text: str) -> dict:
+async def upsert_profile(
+    intro_text: str,
+    resume_text: str,
+    themes_text: str = '',
+    locations_preferred: str = 'Remote',
+    locations_acceptable: str = '',
+    locations_excluded: str = '',
+) -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         await db.execute("""
-            INSERT INTO profile (id, intro_text, resume_text, updated_at)
-            VALUES (1, ?, ?, CURRENT_TIMESTAMP)
+            INSERT INTO profile (id, intro_text, resume_text, themes_text,
+                locations_preferred, locations_acceptable, locations_excluded, updated_at)
+            VALUES (1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(id) DO UPDATE SET
                 intro_text = excluded.intro_text,
                 resume_text = excluded.resume_text,
+                themes_text = excluded.themes_text,
+                locations_preferred = excluded.locations_preferred,
+                locations_acceptable = excluded.locations_acceptable,
+                locations_excluded = excluded.locations_excluded,
                 updated_at = CURRENT_TIMESTAMP
-        """, (intro_text, resume_text))
+        """, (intro_text, resume_text, themes_text,
+              locations_preferred, locations_acceptable, locations_excluded))
         await db.commit()
     return await get_profile()
 
