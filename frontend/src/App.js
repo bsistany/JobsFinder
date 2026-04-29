@@ -364,8 +364,13 @@ function SetupPage() {
 
   const addTitle = async () => {
     if (!newTitle.trim()) return;
-    await axios.post(`${API}/api/pipeline/titles/add`, { title: newTitle.trim() });
-    setNewTitle(''); loadTitles();
+    // Handle multi-line paste — split on newlines and add each as a separate title
+    const lines = newTitle.split(/\n/).map(s => s.trim()).filter(Boolean);
+    for (const line of lines) {
+      await axios.post(`${API}/api/pipeline/titles/add`, { title: line });
+    }
+    setNewTitle('');
+    loadTitles();
   };
 
   const allAnswered = questions.length > 0 && questions.every(q => answers[q.id]?.trim());
@@ -398,16 +403,17 @@ function SetupPage() {
             ))}</div>
         }
 
-        <div style={{display:'flex',gap:8,marginTop:16}}>
-          <input
-            type="text"
+        <div style={{display:'flex',gap:8,marginTop:16,alignItems:'flex-start'}}>
+          <textarea
             value={newTitle}
             onChange={e => setNewTitle(e.target.value)}
-            placeholder="Add a title manually…"
-            onKeyDown={e => e.key === 'Enter' && addTitle()}
-            style={{flex:1}}
+            placeholder="Add one title per line — paste a list or type individually"
+            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), addTitle())}
+            rows={3}
+            style={{flex:1,resize:'vertical'}}
           />
-          <button className="btn btn-outline" onClick={addTitle} disabled={!newTitle.trim()}>+ add</button>
+          <button className="btn btn-outline" onClick={addTitle} disabled={!newTitle.trim()}
+            style={{alignSelf:'flex-start'}}>+ add</button>
         </div>
       </div>
 
@@ -515,7 +521,11 @@ function SetupPage() {
           })}
           <div className="btn-row">
             <button className="btn btn-success" onClick={confirmTitles} disabled={saving}>
-              {saving ? <><span className="spinner"/> saving…</> : `✓ save ${[...selectedFinal].length + storedTitles.length} title${([...selectedFinal].length + storedTitles.length) !== 1 ? 's' : ''}`}
+              {(() => {
+                const advisorTitles = finalTitles.filter((_,i) => selectedFinal.has(i));
+                const merged = [...new Set([...storedTitles.map(t=>t.title), ...advisorTitles])];
+                return saving ? <><span className="spinner"/> saving…</> : `✓ save ${merged.length} title${merged.length !== 1 ? 's' : ''}`;
+              })()}
             </button>
             <button className="btn btn-outline" onClick={() => setStage(SETUP_STAGE.QUESTIONS)}>← go back</button>
           </div>
