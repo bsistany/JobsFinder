@@ -210,7 +210,7 @@ Candidate resume:
 {resume_trunc}{themes_block}
 
 Job title: {job_title}
-Job location: {job_location or 'Not specified'}
+Job location field: {job_location or 'Not specified'}
 Job description:
 {jd_trunc}
 
@@ -222,11 +222,12 @@ Scoring criteria (total 100):
 - Experience level (30%): seniority and years align
 - Role alignment (10%): matches candidate's target per their intro
 - Location match (20%):
-    * Job is in a Preferred location or is Remote → full 20 points
+    * If the location field says only "Canada" or is vague, scan the job description for city mentions
+    * Job is in a Preferred location or is Remote/remote/work from home → full 20 points
     * Job is in an Acceptable location → 15 points
-    * Location not listed → 10 points (neutral)
-    * Job is in an Excluded location → 0 points
-    * If job offers Remote option, treat as Preferred regardless of city
+    * Location not listed or truly unspecified → 12 points (slight preference for known locations)
+    * Job is in an Excluded location (check both location field AND description) → 0 points
+    * If job explicitly offers Remote option, treat as Preferred regardless of city
 
 Return JSON only, no explanation:
 {{
