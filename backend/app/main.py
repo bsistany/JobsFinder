@@ -7,6 +7,7 @@ from typing import Optional, List
 from app.adzuna_service import adzuna_service
 from app.claude_service import claude_service
 from app.pipeline_service import pipeline_service
+from app.location import extract_city, is_preferred, is_excluded
 from app import database as db
 
 @asynccontextmanager
@@ -255,46 +256,78 @@ async def run_pipeline(request: PipelineRunRequest):
 
     intro_text = profile["intro_text"]
     resume_text = profile["resume_text"]
-    fetched_total = scored_total = 0
+    fetched_total = scored_total = location_excluded = 0
     queued_jobs = []
     errors = []
 
     for title_row in titles:
         title = title_row["title"]
-        result = await adzuna_service.search_jobs(what=title, results_per_page=request.results_per_page, country=request.country)
+        result = await adzuna_service.search_jobs(
+            what=title, results_per_page=request.results_per_page, country=request.country
+        )
         if "error" in result:
             errors.append(f"{title}: {result['error']}")
             continue
         jobs = result.get("jobs", [])
         fetched_total += len(jobs)
+
         for job in jobs:
+            # ── Step 1: normalize location ──────────────────────────────────
+            normalized_city = extract_city(
+                job.get("location", ""),
+                job.get("description", "")
+            )
+
+            # ── Step 2: hard exclusion gate — never hits Groq ───────────────
+            if is_excluded(normalized_city):
+                location_excluded += 1
+                continue
+
+            # ── Step 3: score with Groq ─────────────────────────────────────
             scored_total += 1
+            location_tier = (
+                "preferred" if is_preferred(normalized_city)
+                else "acceptable"
+            )
             try:
                 score_result = await pipeline_service.score_job(
-                    intro_text=intro_text, resume_text=resume_text,
-                    job_title=job["title"], job_description=job.get("description", ""),
-                    job_location=job.get("location", ""),
+                    intro_text=intro_text,
+                    resume_text=resume_text,
+                    job_title=job["title"],
+                    job_description=job.get("description", ""),
+                    job_location=normalized_city,
+                    location_tier=location_tier,
                     themes_text=profile.get("themes_text", ""),
-                    locations_preferred=profile.get("locations_preferred", "Remote"),
-                    locations_acceptable=profile.get("locations_acceptable", ""),
-                    locations_excluded=profile.get("locations_excluded", ""),
                 )
             except Exception as e:
                 errors.append(f"Scoring '{job['title']}': {str(e)}")
                 continue
+
             score = score_result.get("score", 0)
             if score >= 70:
-                job_record = {**job, "score": score, "score_reason": score_result.get("reason", "")}
+                job_record = {
+                    **job,
+                    "location": normalized_city,
+                    "score": score,
+                    "score_reason": score_result.get("reason", "")
+                }
                 await db.upsert_application(job_record)
                 queued_jobs.append(job_record)
 
+    # Sort: preferred locations first, then acceptable, both by score desc
+    def sort_key(j):
+        city = j.get("location", "Unknown")
+        tier = 0 if is_preferred(city) else 1
+        return (tier, -j["score"])
+
     return {
         "fetched": fetched_total,
+        "location_excluded": location_excluded,
         "scored": scored_total,
         "queued": len(queued_jobs),
         "dropped": scored_total - len(queued_jobs),
         "errors": errors,
-        "jobs": sorted(queued_jobs, key=lambda j: j["score"], reverse=True)
+        "jobs": sorted(queued_jobs, key=sort_key)
     }
 
 # ─── NEW: Pipeline — Queue ────────────────────────────────────────────────────
