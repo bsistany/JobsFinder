@@ -1,12 +1,12 @@
 import os
+import re
 import json
 from groq import Groq
 from typing import List, Dict
 from dotenv import load_dotenv
+from app.location import extract_city, is_preferred, is_acceptable, is_excluded
 
 load_dotenv()
-
-# Word-count based truncation — keeps prompts token-safe
 def _truncate(text: str, max_words: int) -> str:
     words = text.split()
     if len(words) <= max_words:
@@ -173,14 +173,15 @@ Respond with JSON only:
         job_title: str,
         job_description: str,
         job_location: str = '',
+        location_tier: str = 'preferred',
         themes_text: str = '',
-        locations_preferred: str = 'Remote',
-        locations_acceptable: str = '',
-        locations_excluded: str = '',
     ) -> dict:
         """
         Score a single job against the user's profile.
-        Truncation budget: intro ≤180w, resume ≤350w, JD ≤280w, themes ≤80w → ~1000 tokens.
+        Location exclusion is handled before this call in Python — only
+        preferred/acceptable jobs reach here. The acceptable penalty (-5)
+        is applied deterministically in Python after scoring.
+        Truncation: intro ≤180w, resume ≤350w, JD ≤280w, themes ≤80w.
 
         Returns: { "score": int 0-100, "reason": str ≤20 words }
         """
@@ -188,18 +189,13 @@ Respond with JSON only:
         resume_trunc = _truncate(resume_text, 350)
         jd_trunc = _truncate(job_description, 280)
         themes_trunc = _truncate(themes_text, 80) if themes_text.strip() else ''
+        themes_block = f"\nCandidate career narrative:\n{themes_trunc}" if themes_trunc else ''
 
-        # Build location context block
-        loc_lines = []
-        if locations_preferred:
-            loc_lines.append(f"Preferred: {locations_preferred}")
-        if locations_acceptable:
-            loc_lines.append(f"Acceptable: {locations_acceptable}")
-        if locations_excluded:
-            loc_lines.append(f"Excluded (hard penalty): {locations_excluded}")
-        location_context = "\n".join(loc_lines) if loc_lines else "No preference specified"
-
-        themes_block = f"\nCandidate career narrative (voice/emphasis patterns):\n{themes_trunc}" if themes_trunc else ''
+        location_note = (
+            f"Location: {job_location} (preferred)"
+            if location_tier == "preferred"
+            else f"Location: {job_location} (acceptable — candidate open to this location)"
+        )
 
         prompt = f"""Score how well this job matches the candidate. Return JSON only.
 
@@ -210,24 +206,14 @@ Candidate resume:
 {resume_trunc}{themes_block}
 
 Job title: {job_title}
-Job location field: {job_location or 'Not specified'}
+{location_note}
 Job description:
 {jd_trunc}
-
-Candidate location preferences:
-{location_context}
 
 Scoring criteria (total 100):
 - Skills match (40%): how well candidate skills match JD requirements
 - Experience level (30%): seniority and years align
-- Role alignment (10%): matches candidate's target per their intro
-- Location match (20%):
-    * If the location field says only "Canada" or is vague, scan the job description for city mentions
-    * Job is in a Preferred location or is Remote/remote/work from home → full 20 points
-    * Job is in an Acceptable location → 15 points
-    * Location not listed or truly unspecified → 12 points (slight preference for known locations)
-    * Job is in an Excluded location (check both location field AND description) → 0 points
-    * If job explicitly offers Remote option, treat as Preferred regardless of city
+- Role alignment (30%): matches candidate's target per their intro
 
 Return JSON only, no explanation:
 {{
@@ -242,7 +228,12 @@ Return JSON only, no explanation:
         )
         raw = _strip_json_fences(response.choices[0].message.content)
         result = json.loads(raw)
-        result["score"] = max(0, min(100, int(result["score"])))
+
+        # Apply acceptable penalty deterministically — not left to Groq
+        score = max(0, min(100, int(result["score"])))
+        if location_tier == "acceptable":
+            score = max(0, score - 5)
+        result["score"] = score
         return result
 
     # ─── Document generation ──────────────────────────────────────────────────
