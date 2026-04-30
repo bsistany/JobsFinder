@@ -173,13 +173,16 @@ class TestIsAcceptable:
 class TestIsExcluded:
 
     def test_vancouver_excluded(self):
-        assert is_excluded("Unknown") is True
+        assert is_excluded(extract_city("Vancouver, BC", "")) is True
 
     def test_calgary_excluded(self):
-        assert is_excluded("Unknown") is True
+        assert is_excluded(extract_city("Calgary, Calgary region", "")) is True
 
     def test_toronto_excluded(self):
-        assert is_excluded("Unknown") is True
+        assert is_excluded(extract_city("Toronto, Ontario", "")) is True
+
+    def test_edmonton_excluded(self):
+        assert is_excluded(extract_city("Edmonton, Alberta", "")) is True
 
     def test_unknown_excluded(self):
         assert is_excluded("Unknown") is True
