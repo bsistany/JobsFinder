@@ -543,8 +543,10 @@ function PipelinePage() {
   const [log, setLog] = useState([]);
   const [queue, setQueue] = useState([]);
   const [loadingQueue, setLoadingQueue] = useState(true);
+  const [lastRun, setLastRun] = useState(null);
   const [deciding, setDeciding] = useState({});
   const [generating, setGenerating] = useState({});
+  const [clearing, setClearing] = useState(false);
   const [selectedJob, setSelectedJob] = useState(null);
   const [error, setError] = useState('');
 
@@ -556,7 +558,28 @@ function PipelinePage() {
       .finally(() => setLoadingQueue(false));
   }, []);
 
-  useEffect(() => { loadQueue(); }, [loadQueue]);
+  const loadLastRun = useCallback(() => {
+    axios.get(`${API}/api/pipeline/last-run`)
+      .then(r => setLastRun(r.data.last_run || null))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => { loadQueue(); loadLastRun(); }, [loadQueue, loadLastRun]);
+
+  const clearQueue = async () => {
+    if (!window.confirm('Clear all queued jobs? Approved, drafted and applied jobs are not affected.')) return;
+    setClearing(true);
+    try {
+      const r = await axios.delete(`${API}/api/pipeline/queue/clear`);
+      setQueue([]);
+      setError('');
+      // Show brief confirmation
+      setLog([{text:`✓ Cleared ${r.data.cleared} queued jobs`, type:'done'}]);
+      setTimeout(() => setLog([]), 3000);
+    } catch(e) {
+      setError('Clear failed.');
+    } finally { setClearing(false); }
+  };
 
   const runPipeline = async () => {
     setError(''); setRunning(true); setRunResult(null);
@@ -574,6 +597,7 @@ function PipelinePage() {
       ]);
       setRunResult(d);
       loadQueue();
+      loadLastRun();
     } catch(e) {
       setError(e.response?.data?.detail || 'Pipeline run failed.');
       setLog([]);
@@ -623,7 +647,14 @@ function PipelinePage() {
 
       <div className="card">
         <div className="card-header">
-          <div className="card-title">run pipeline</div>
+          <div>
+            <div className="card-title">run pipeline</div>
+            {lastRun && (
+              <div style={{fontSize:11,color:'var(--text3)',fontFamily:'var(--mono)',marginTop:3}}>
+                last run: {new Date(lastRun.run_at + 'Z').toLocaleString()} · {lastRun.fetched} fetched · {lastRun.queued} queued
+              </div>
+            )}
+          </div>
           <button className="btn btn-primary" onClick={runPipeline} disabled={running}>
             {running ? <><span className="spinner"/> running…</> : '▶ run now'}
           </button>
@@ -652,7 +683,12 @@ function PipelinePage() {
       {/* Queue */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
         <div className="card-title">approval queue <span style={{color:'var(--text3)',fontWeight:400}}>({queue.length})</span></div>
-        <button className="btn btn-outline btn-sm" onClick={loadQueue}>↻ refresh</button>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn btn-danger btn-sm" onClick={clearQueue} disabled={clearing || queue.length === 0}>
+            {clearing ? <><span className="spinner"/> clearing…</> : '✕ clear queue'}
+          </button>
+          <button className="btn btn-outline btn-sm" onClick={loadQueue}>↻ refresh</button>
+        </div>
       </div>
       <p style={{fontSize:11,color:'var(--text3)',fontFamily:'var(--mono)',marginBottom:12}}>
         ⚠ Adzuna may show an email signup popup — click "No Thanks" to proceed to the job posting
@@ -686,6 +722,11 @@ function PipelinePage() {
             </div>
           </div>
           <div className="job-location">{job.location}</div>
+          {job.fetched_at && (
+            <div style={{fontSize:10,color:'var(--text3)',fontFamily:'var(--mono)',marginTop:2}}>
+              fetched {new Date(job.fetched_at + 'Z').toLocaleDateString()}
+            </div>
+          )}
           {job.salary_min && job.salary_max && (
             <div className="job-salary" style={{marginTop:4}}>
               ${Math.round(job.salary_min).toLocaleString()} – ${Math.round(job.salary_max).toLocaleString()}
