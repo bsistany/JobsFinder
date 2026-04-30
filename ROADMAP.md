@@ -18,9 +18,9 @@ cover letters on approval, and track applications — all in one tool.
 |---|---|---|
 | Frontend | React | IBM Plex Mono/Sans, dark industrial theme |
 | Backend | FastAPI (Python) | Async, auto-docs at `/docs` |
-| AI / NLP | Groq API (llama-3.1-8b-instant) | Free tier. Smart truncation per call (see scoring notes) |
+| AI / NLP | Groq API (llama-3.1-8b-instant) | Free tier. Smart truncation per call |
 | Job Data | Adzuna API | Canadian (`ca`) by default |
-| DB | SQLite via aiosqlite | 4 tables: profile, job_titles, applications, advisor_session |
+| DB | SQLite via aiosqlite | 5 tables: profile, job_titles, applications, advisor_session, pipeline_runs |
 | Containerization | Docker + docker-compose | Frontend + backend, SQLite mounted as volume |
 
 ---
@@ -33,10 +33,12 @@ JobsFinder/
 │   ├── app/
 │   │   ├── main.py              # All FastAPI routes (pipeline + existing advisor/search)
 │   │   ├── pipeline_service.py  # Groq calls: analyze, score, generate docs
+│   │   ├── location.py          # Pure Python location normalizer and gate functions
 │   │   ├── claude_service.py    # KEPT — Groq calls for Career Advisor tab (untouched)
 │   │   ├── adzuna_service.py    # KEPT — Adzuna job search (untouched)
-│   │   └── database.py         # SQLite init, migration, all DB helpers
+│   │   └── database.py         # SQLite init, migrations, all DB helpers
 │   ├── tests/
+│   │   └── test_location.py    # 63 unit tests for location normalizer and gate
 │   ├── requirements.txt
 │   ├── Dockerfile
 │   └── .env                    # GROQ_API_KEY, ADZUNA_APP_ID, ADZUNA_APP_KEY
@@ -46,12 +48,12 @@ JobsFinder/
 │   │   └── App.css             # Dark industrial theme (IBM Plex Mono/Sans)
 │   ├── Dockerfile
 │   └── package.json
-├── docker-compose.yml
+├── docker-compose.yml           # Backend health check, frontend depends_on backend
 ├── ROADMAP.md
 ├── my_docs/                    # gitignored — local private documents
 │   ├── Bahman-Sistany-Intro.txt
 │   ├── Bahman-Sistany-resume-2026-V04.txt
-│   └── cover_letter_themes.txt (planned)
+│   └── cover_letter_themes.txt  # NotebookLM output from 16 past cover letters
 └── database/                   # SQLite DB mounted here (job_search.db)
 ```
 
@@ -65,14 +67,44 @@ JobsFinder/
 | Scoring truncation | intro ≤180w + resume ≤350w + JD ≤280w + themes ≤80w | Keeps scoring calls under 1000 tokens |
 | Profile inputs | intro + resume + career narrative + location prefs | File upload or paste; all stored in DB |
 | Score threshold | 70% hard filter | Sub-70 dropped silently — user only sees qualified leads |
-| Location scoring | preferred/acceptable/excluded tiers | 20% of score; Remote always preferred unless excluded |
+| Location filtering | Python gate before Groq, not LLM instruction | Deterministic — LLM cannot override exclusions |
+| Location tiers | Preferred: Ottawa, Remote / Acceptable: Montreal / Everything else: excluded | Hard-coded in location.py, not stored in DB |
+| City normalization | CITY_ALIASES dict + regex for remote/hybrid | Handles accents, suburbs, hybrid variants |
+| Acceptable penalty | -5 points applied in Python after scoring | Deterministic, not left to Groq |
 | Career narrative | Optional third doc from NotebookLM analysis | Improves voice matching in cover letter generation |
-| Job titles | Stored in DB, advisor-driven setup + manual edit | Run advisor once to bootstrap, manage on-demand after |
+| Job titles | Stored in DB, advisor-driven setup + manual edit | Textarea accepts multi-line paste — one title per line |
 | Advisor session | Persisted to DB | Setup state survives navigation and page refresh |
 | Generation timing | On approval only | Never bulk-generate — one job at a time, user-triggered |
 | Career Advisor tab | Kept untouched | Separate feature for general users; not part of pipeline |
-| DB | SQLite (aiosqlite) | Already in docker-compose, no new infra needed |
-| Frontend nav | Sidebar with pipeline views + general tabs | Pipeline is primary; advisor/search secondary |
+| DB | SQLite (aiosqlite) | Simple, no infra, mounted as volume |
+| Docker | Backend health check + frontend depends_on | Reliable startup order, no race condition |
+| Postgres | Removed | Was never used — we use SQLite |
+
+---
+
+## Location Rules (location.py)
+
+**Preferred (full score)**
+- Remote, work from home, WFH, fully remote, hybrid with no city
+- Ottawa — including: Gatineau, Kanata, Nepean, Hull, Orléans, Gloucester
+- Ottawa Hybrid → counts as Ottawa
+
+**Acceptable (-5 points applied in Python)**
+- Montreal — including: Montréal, Laval, Longueuil
+- Montreal Hybrid → counts as Montreal
+
+**Excluded (hard drop, never reaches Groq)**
+- Everything else — Toronto, Vancouver, Calgary, Edmonton, Unknown, etc.
+- Hybrid only gets credit for the city it's attached to
+- "Hybrid - Vancouver" → Excluded
+
+**Normalization priority:**
+1. Remote signals in location field
+2. Known city in location field
+3. Hybrid in location field → scan description → fallback Remote
+4. Remote signals in first 600 chars of description
+5. Known city in first 600 chars of description
+6. "Unknown" → Excluded
 
 ---
 
@@ -80,25 +112,28 @@ JobsFinder/
 
 ### `profile` (single row, id=1)
 - `id`, `intro_text`, `resume_text`, `themes_text`
-- `locations_preferred` (comma-sep, default: `Remote`)
-- `locations_acceptable` (comma-sep)
-- `locations_excluded` (comma-sep)
+- `locations_preferred` (stored but not used for gate — gate uses location.py hardcoded rules)
+- `locations_acceptable`, `locations_excluded`
 - `updated_at`
 
 ### `job_titles`
 - `id`, `title`, `added_at`
 
 ### `applications`
-- `id` (Adzuna job id), `title`, `company`, `location`, `description`
+- `id` (Adzuna job id), `title`, `company`, `location` (normalized city), `description`
 - `salary_min`, `salary_max`, `redirect_url`
 - `score` (0-100), `score_reason`
 - `status`: `queued` → `approved`/`rejected` → `drafted` → `applied`/`no_response`
 - `resume_notes`, `cover_letter`
-- `created_at`, `updated_at`
+- `fetched_at`, `created_at`, `updated_at`
 
 ### `advisor_session` (single row, id=1)
 - `id`, `stage`, `data` (JSON blob), `updated_at`
 - Persists setup flow state across navigation
+
+### `pipeline_runs`
+- `id`, `run_at`, `fetched`, `location_excluded`, `scored`, `queued`, `dropped`
+- One row per pipeline run — used for "last run at" display
 
 ---
 
@@ -112,10 +147,12 @@ JobsFinder/
 | POST | `/api/pipeline/setup/refine` | Takes Q&A answers, returns final confirmed title list |
 | GET/POST/DELETE | `/api/pipeline/setup/session` | Persist/restore/clear advisor session |
 | GET/POST | `/api/pipeline/titles` | Get or replace full title list |
-| POST | `/api/pipeline/titles/add` | Add one title |
+| POST | `/api/pipeline/titles/add` | Add one title (or multi-line paste) |
 | DELETE | `/api/pipeline/titles/{id}` | Remove one title |
-| POST | `/api/pipeline/run` | Fetch from Adzuna, score all, persist ≥70% as queued |
+| POST | `/api/pipeline/run` | Fetch → normalize location → gate → score → queue ≥70% |
+| GET | `/api/pipeline/last-run` | Last pipeline run summary |
 | GET | `/api/pipeline/queue` | Get queued applications |
+| DELETE | `/api/pipeline/queue/clear` | Clear queued jobs only (preserves approved/drafted/applied) |
 | POST | `/api/pipeline/queue/{id}/decide` | approve or reject |
 | POST | `/api/pipeline/generate/{id}` | Generate resume notes + cover letter |
 | GET | `/api/pipeline/tracker` | All applications |
@@ -141,33 +178,42 @@ JobsFinder/
 - Docker setup, tests
 
 ### v0.6.0 — Personal Job Match Pipeline
-- `database.py` — SQLite init, profile/titles/applications helpers
-- `pipeline_service.py` — Groq scoring, advisor-driven title analysis, doc generation
-- `main.py` — all pipeline routes added, existing routes preserved
-- `App.js` — full rebuild: sidebar nav, Profile, Setup, Pipeline, Tracker views
-- `App.css` — dark industrial theme with IBM Plex Mono/Sans
+- SQLite database layer
+- Pipeline service (scoring, advisor, doc generation)
+- All pipeline API routes
+- Frontend rebuild: sidebar nav, Profile, Setup, Pipeline, Tracker
 
 ### v0.7.0 — Profile Enrichment + Location Filtering
-- `database.py` — added `themes_text`, `locations_preferred/acceptable/excluded` to profile; `advisor_session` table; safe ALTER TABLE migration
-- `pipeline_service.py` — location penalty in scoring (20% weight); themes context in scoring, resume notes, cover letter
-- `main.py` — profile API accepts all new fields; generation passes themes; scoring passes location + themes
-- `App.js` — file upload for all doc fields; career narrative field; structured location tier editor (pills); advisor session persisted to DB
+- Career narrative field (NotebookLM output)
+- File upload for all doc fields (load .txt)
+- Structured location tier editor in Profile UI
+- Location penalty in scoring (initially via Groq — later replaced)
+- Advisor session persisted to DB
+
+### v0.8.0 — Pipeline Hardening + Persistence
+- `location.py` — pure Python location normalizer and hard exclusion gate
+- 63 unit tests for location normalizer (`tests/test_location.py`)
+- Python gate runs before Groq — excluded cities never consume API calls
+- Queue sorted: Remote/Ottawa first, Montreal after, both by score desc
+- `pipeline_runs` table — last run timestamp and stats
+- `fetched_at` on applications — shown on job cards
+- "Clear queue" button — deletes only queued rows, preserves everything else
+- "Last run at" banner on Pipeline page
+- docker-compose: backend health check, frontend depends_on, Postgres removed
+- Multi-line paste in title input — one title per line
 
 ---
 
 ## 🔜 Planned
 
-### v0.8 — Pipeline Quality
+### v0.9 — Quality of Life
 - [ ] Pagination in pipeline run (fetch more than 10/title)
 - [ ] Re-score existing queued jobs when profile changes
-- [ ] Pipeline run history (timestamp, counts per run)
 - [ ] Export tracker to CSV
 - [ ] Batch approve with one click
-
-### v0.9 — Content Quality
 - [ ] Notes field per application (free text, interview prep)
 - [ ] Interview stage tracking
-- [ ] PDF upload support (parse resume/intro from PDF directly)
+- [ ] PDF upload support
 
 ---
 
@@ -180,24 +226,34 @@ JobsFinder/
 **Status:** By design in adzuna_service.py — sufficient for scoring, may miss nuance.
 
 ### KI-003: Adzuna email popup on job view
-**Status:** Known — click "No Thanks" to proceed to the posting. Warning shown in UI.
+**Status:** Known — click "No Thanks" to proceed. Warning shown in UI.
+
+### KI-004: Pre-gate jobs may appear in queue after DB wipe
+**Status:** Resolved by doing full DB wipe (Option B) when location gate was deployed.
+Future runs are clean — gate runs on every pipeline execution.
 
 ---
 
 ## Running the App
 
 ```bash
-# Start
+# Start (normal)
 docker compose up
 
-# Rebuild after code changes (requirements.txt, Dockerfile, package.json)
+# First start or after orphan containers warning
+docker compose up --remove-orphans
+
+# Rebuild after requirements.txt / Dockerfile / package.json changes
 docker compose down && docker compose up --build
 
-# Restart backend only (after .py file changes if hot-reload missed)
+# Restart backend only (after .py changes if hot-reload missed)
 docker compose restart backend
 
-# Run tests
-docker compose exec backend pytest tests/
+# Run location tests
+docker compose exec backend pytest tests/test_location.py -v
+
+# Run all tests
+docker compose exec backend pytest tests/ -v
 
 # API docs
 open http://localhost:8000/docs
@@ -216,13 +272,27 @@ open http://localhost:3000
 | `Dockerfile` | `docker compose up --build` |
 | `package.json` | `docker compose up --build` |
 | New DB columns | `docker compose restart backend` (migration runs on startup) |
+| Full DB wipe | `docker compose down && rm database/job_search.db && docker compose up` |
 
-## First-Run Checklist
+## Normal Session Workflow
 
-1. **Profile** → load or paste intro doc + resume → set location preferences → Save
-2. **Search Setup** → run advisor → deselect irrelevant titles → answer questions → confirm
-3. **Pipeline** → run now → review queue → approve or generate docs directly
-4. **Tracker** → update status as you progress through applications
+```
+Open app → Pipeline page shows queue from last run
+↓
+Work through queue — approve, reject, generate docs
+↓
+Run pipeline again when you want fresh results
+↓
+No DB wipes, no re-saving profile, no re-adding titles
+  unless something actually changed
+```
+
+## Fresh Start Workflow (after DB wipe)
+
+1. **Profile** → load intro + resume + career narrative → set location tiers → Save
+2. **Search Setup** → paste all titles (one per line) in textarea → add → verify count
+3. **Pipeline** → run now → check location_excluded count in stats
+4. Work through queue
 
 ## my_docs/ contents (gitignored)
 
@@ -230,5 +300,16 @@ open http://localhost:3000
 my_docs/
 ├── Bahman-Sistany-Intro.txt           # intro document
 ├── Bahman-Sistany-resume-2026-V04.txt # current resume
-└── cover_letter_themes.txt            # planned — NotebookLM output from past cover letters
+└── cover_letter_themes.txt            # NotebookLM output from 16 past cover letters
+                                       # sections: value proposition, narrative,
+                                       # job titles, consistent strengths, industries
 ```
+
+## Version Tags
+
+| Tag | Description |
+|---|---|
+| `v0.5.0-career-advisor` | Original — career advisor + job search |
+| `v0.6.0-pipeline` | Personal job match pipeline |
+| `v0.7.0-profile-enrichment` | Career narrative, file upload, location tiers |
+| `v0.8.0-pipeline-hardening` | Python location gate, tests, persistence |
