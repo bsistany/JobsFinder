@@ -566,10 +566,11 @@ function PipelinePage() {
       const d = r.data;
       setLog([
         {text:`✓ Fetched ${d.fetched} jobs across all titles`, type:'done'},
+        {text:`✓ ${d.location_excluded} dropped by location filter (before scoring)`, type:'done'},
         {text:`✓ Scored ${d.scored} jobs`, type:'done'},
         {text:`✓ ${d.queued} passed the 70% threshold`, type:'done'},
         {text:`  ${d.dropped} dropped (below threshold)`, type:'active'},
-        ...(d.errors.length ? [{text:`⚠ ${d.errors.length} error(s) — check console`, type:'err'}] : [])
+        ...(d.errors.length ? [{text:`⚠ ${d.errors.length} error(s)`, type:'err'}] : [])
       ]);
       setRunResult(d);
       loadQueue();
@@ -640,9 +641,10 @@ function PipelinePage() {
         {runResult && (
           <div className="stats-row" style={{marginTop:16,marginBottom:0}}>
             <div className="stat-box"><div className="stat-value">{runResult.fetched}</div><div className="stat-label">fetched</div></div>
+            <div className="stat-box"><div className="stat-value" style={{color:'var(--red)'}}>{runResult.location_excluded}</div><div className="stat-label">location filtered</div></div>
             <div className="stat-box"><div className="stat-value">{runResult.scored}</div><div className="stat-label">scored</div></div>
             <div className="stat-box"><div className="stat-value" style={{color:'var(--green)'}}>{runResult.queued}</div><div className="stat-label">queued</div></div>
-            <div className="stat-box"><div className="stat-value" style={{color:'var(--text3)'}}>{runResult.dropped}</div><div className="stat-label">dropped</div></div>
+            <div className="stat-box"><div className="stat-value" style={{color:'var(--text3)'}}>{runResult.dropped}</div><div className="stat-label">below 70%</div></div>
           </div>
         )}
       </div>
