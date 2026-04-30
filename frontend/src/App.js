@@ -748,13 +748,7 @@ function PipelinePage() {
             >
               {deciding[job.id] === 'reject' ? <span className="spinner"/> : '✗'} reject
             </button>
-            <button
-              className="btn btn-outline btn-sm"
-              onClick={() => generate(job)}
-              disabled={generating[job.id]}
-            >
-              {generating[job.id] ? <><span className="spinner"/> generating…</> : '✦ generate docs'}
-            </button>
+
           </div>
         </div>
       ))}
@@ -828,6 +822,18 @@ function TrackerPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
   const [selectedJob, setSelectedJob] = useState(null);
+  const [generating, setGenerating] = useState({});
+
+  const generate = async (job) => {
+    setGenerating(g => ({...g, [job.id]: true}));
+    try {
+      const r = await axios.post(`${API}/api/pipeline/generate/${job.id}`);
+      setJobs(j => j.map(x => x.id === job.id ? r.data.job : x));
+      setSelectedJob(r.data.job);
+    } catch(e) {
+      alert(e.response?.data?.detail || 'Generation failed.');
+    } finally { setGenerating(g => ({...g, [job.id]: false})); }
+  };
 
   const load = useCallback(() => {
     setLoading(true);
@@ -909,7 +915,15 @@ function TrackerPage() {
                   <td>
                     {job.resume_notes || job.cover_letter
                       ? <button className="btn btn-outline btn-sm" onClick={() => setSelectedJob(job)}>view docs</button>
-                      : <span style={{color:'var(--text3)',fontSize:11,fontFamily:'var(--mono)'}}>—</span>
+                      : (job.status === 'approved' || job.status === 'drafted')
+                        ? <button
+                            className="btn btn-outline btn-sm"
+                            onClick={() => generate(job)}
+                            disabled={generating[job.id]}
+                          >
+                            {generating[job.id] ? <><span className="spinner"/> generating…</> : '✦ generate docs'}
+                          </button>
+                        : <span style={{color:'var(--text3)',fontSize:11,fontFamily:'var(--mono)'}}>—</span>
                     }
                   </td>
                   <td>
