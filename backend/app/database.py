@@ -50,10 +50,28 @@ CREATE TABLE IF NOT EXISTS applications (
     status TEXT NOT NULL DEFAULT 'queued',
     resume_notes TEXT,
     cover_letter TEXT,
+    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """
+
+CREATE_PIPELINE_RUNS_TABLE = """
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fetched INTEGER NOT NULL DEFAULT 0,
+    location_excluded INTEGER NOT NULL DEFAULT 0,
+    scored INTEGER NOT NULL DEFAULT 0,
+    queued INTEGER NOT NULL DEFAULT 0,
+    dropped INTEGER NOT NULL DEFAULT 0
+)
+"""
+
+MIGRATE_APPLICATIONS_V2 = [
+    "ALTER TABLE applications ADD COLUMN fetched_at TIMESTAMP",
+    "UPDATE applications SET fetched_at = CURRENT_TIMESTAMP WHERE fetched_at IS NULL",
+]
 
 CREATE_ADVISOR_SESSION_TABLE = """
 CREATE TABLE IF NOT EXISTS advisor_session (
@@ -80,12 +98,19 @@ async def init_db():
         await db.execute(CREATE_JOB_TITLES_TABLE)
         await db.execute(CREATE_APPLICATIONS_TABLE)
         await db.execute(CREATE_ADVISOR_SESSION_TABLE)
-        # v0.7.0 migration — add new columns if they don't exist yet
+        await db.execute(CREATE_PIPELINE_RUNS_TABLE)
+        # v0.7.0 — profile columns
         for sql in MIGRATE_PROFILE_V2:
             try:
                 await db.execute(sql)
             except Exception:
-                pass  # column already exists
+                pass
+        # v0.8.0 — applications fetched_at column + backfill
+        for sql in MIGRATE_APPLICATIONS_V2:
+            try:
+                await db.execute(sql)
+            except Exception:
+                pass
         await db.commit()
 
 # ─── Profile helpers ─────────────────────────────────────────────────────────
@@ -170,8 +195,8 @@ async def upsert_application(job: dict) -> None:
             INSERT INTO applications
                 (id, title, company, location, description,
                  salary_min, salary_max, redirect_url,
-                 score, score_reason, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued')
+                 score, score_reason, status, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', CURRENT_TIMESTAMP)
             ON CONFLICT(id) DO NOTHING
         """, (
             job["id"], job["title"], job["company"], job["location"],
@@ -263,3 +288,42 @@ async def clear_advisor_session() -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM advisor_session WHERE id = 1")
         await db.commit()
+
+# ─── Pipeline run helpers ─────────────────────────────────────────────────────
+
+async def log_pipeline_run(
+    fetched: int,
+    location_excluded: int,
+    scored: int,
+    queued: int,
+    dropped: int,
+) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO pipeline_runs
+                (fetched, location_excluded, scored, queued, dropped)
+            VALUES (?, ?, ?, ?, ?)
+        """, (fetched, location_excluded, scored, queued, dropped))
+        await db.commit()
+
+async def get_last_pipeline_run() -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM pipeline_runs ORDER BY run_at DESC LIMIT 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+async def clear_queue() -> int:
+    """Delete all queued applications. Returns count deleted."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT COUNT(*) as cnt FROM applications WHERE status = 'queued'"
+        ) as cursor:
+            row = await cursor.fetchone()
+            count = row["cnt"] if row else 0
+        await db.execute("DELETE FROM applications WHERE status = 'queued'")
+        await db.commit()
+    return count
