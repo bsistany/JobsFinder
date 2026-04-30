@@ -320,7 +320,7 @@ async def run_pipeline(request: PipelineRunRequest):
         tier = 0 if is_preferred(city) else 1
         return (tier, -j["score"])
 
-    return {
+    result = {
         "fetched": fetched_total,
         "location_excluded": location_excluded,
         "scored": scored_total,
@@ -329,6 +329,15 @@ async def run_pipeline(request: PipelineRunRequest):
         "errors": errors,
         "jobs": sorted(queued_jobs, key=sort_key)
     }
+
+    await db.log_pipeline_run(
+        fetched=fetched_total,
+        location_excluded=location_excluded,
+        scored=scored_total,
+        queued=len(queued_jobs),
+        dropped=scored_total - len(queued_jobs),
+    )
+    return result
 
 # ─── NEW: Pipeline — Queue ────────────────────────────────────────────────────
 
@@ -345,6 +354,16 @@ async def decide_job(job_id: str, request: DecideRequest):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"job": job}
+
+@app.delete("/api/pipeline/queue/clear")
+async def clear_queue():
+    count = await db.clear_queue()
+    return {"cleared": count}
+
+@app.get("/api/pipeline/last-run")
+async def get_last_run():
+    run = await db.get_last_pipeline_run()
+    return {"last_run": run}
 
 # ─── NEW: Pipeline — Generate ─────────────────────────────────────────────────
 
