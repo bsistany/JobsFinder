@@ -549,6 +549,8 @@ function PipelinePage() {
   const [clearing, setClearing] = useState(false);
   const [selectedJob, setSelectedJob] = useState(null);
   const [error, setError] = useState('');
+  const [filterExpr, setFilterExpr] = useState('');
+  const [batching, setBatching] = useState(false);
 
   const loadQueue = useCallback(() => {
     setLoadingQueue(true);
@@ -631,6 +633,91 @@ function PipelinePage() {
     });
   };
 
+  // ── Batch filter ──────────────────────────────────────────────────────────
+  // Parses expressions like: python AND (django OR fastapi) NOT junior
+  // Matches against job title + description, case-insensitive.
+  const matchesExpr = (expr, job) => {
+    const text = ((job.title || '') + ' ' + (job.description || '')).toLowerCase();
+    const input = expr.trim();
+    if (!input) return true;
+
+    // Tokenizer: words, AND, OR, NOT, (, )
+    const tokens = [];
+    const re = /\(|\)|AND|OR|NOT|[^\s()]+/gi;
+    let m;
+    while ((m = re.exec(input)) !== null) tokens.push(m[0].toUpperCase());
+
+    let pos = 0;
+
+    const peek = () => tokens[pos];
+    const consume = () => tokens[pos++];
+
+    // Grammar (precedence low→high): expr = or_expr
+    //   or_expr  = and_expr  (OR  and_expr)*
+    //   and_expr = not_expr  (AND not_expr)*  |  not_expr (implicit AND)
+    //   not_expr = NOT not_expr | atom
+    //   atom     = '(' expr ')' | WORD
+
+    const parseExpr = () => parseOr();
+
+    const parseOr = () => {
+      let left = parseAnd();
+      while (peek() === 'OR') { consume(); left = left || parseAnd(); }
+      return left;
+    };
+
+    const parseAnd = () => {
+      let left = parseNot();
+      while (peek() && peek() !== ')' && peek() !== 'OR') {
+        if (peek() === 'AND') consume();
+        left = left && parseNot();
+      }
+      return left;
+    };
+
+    const parseNot = () => {
+      if (peek() === 'NOT') { consume(); return !parseNot(); }
+      return parseAtom();
+    };
+
+    const parseAtom = () => {
+      const tok = peek();
+      if (!tok) return true;
+      if (tok === '(') {
+        consume(); // (
+        const val = parseExpr();
+        if (peek() === ')') consume(); // )
+        return val;
+      }
+      // Plain keyword
+      consume();
+      return text.includes(tok.toLowerCase());
+    };
+
+    try { return parseExpr(); }
+    catch { return false; }
+  };
+
+  const filteredQueue = filterExpr.trim()
+    ? queue.filter(job => matchesExpr(filterExpr, job))
+    : queue;
+
+  const batchDecide = async (action) => {
+    if (!filteredQueue.length) return;
+    const word = action === 'approve' ? 'approve' : 'reject';
+    if (!window.confirm(`${word.charAt(0).toUpperCase() + word.slice(1)} ${filteredQueue.length} job(s)?`)) return;
+    setBatching(true);
+    try {
+      await Promise.all(filteredQueue.map(job =>
+        axios.post(`${API}/api/pipeline/queue/${job.id}/decide`, { action })
+      ));
+      const ids = new Set(filteredQueue.map(j => j.id));
+      setQueue(q => q.filter(j => !ids.has(j.id)));
+      setFilterExpr('');
+    } catch { setError('Batch action failed.'); }
+    finally { setBatching(false); }
+  };
+
   // Document view
   if (selectedJob) {
     return <DocsView job={selectedJob} onBack={() => setSelectedJob(null)} onSave={saveEdited} />;
@@ -681,8 +768,13 @@ function PipelinePage() {
       </div>
 
       {/* Queue */}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
-        <div className="card-title">approval queue <span style={{color:'var(--text3)',fontWeight:400}}>({queue.length})</span></div>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+        <div className="card-title">
+          approval queue{' '}
+          <span style={{color:'var(--text3)',fontWeight:400}}>
+            ({filterExpr.trim() ? `${filteredQueue.length} of ${queue.length}` : queue.length})
+          </span>
+        </div>
         <div style={{display:'flex',gap:8}}>
           <button className="btn btn-danger btn-sm" onClick={clearQueue} disabled={clearing || queue.length === 0}>
             {clearing ? <><span className="spinner"/> clearing…</> : '✕ clear queue'}
@@ -690,6 +782,63 @@ function PipelinePage() {
           <button className="btn btn-outline btn-sm" onClick={loadQueue}>↻ refresh</button>
         </div>
       </div>
+
+      {/* Batch filter bar */}
+      {queue.length > 0 && (
+        <div style={{
+          background:'var(--surface2)',border:'1px solid var(--border)',
+          borderRadius:6,padding:'10px 12px',marginBottom:12,
+          display:'flex',flexDirection:'column',gap:8
+        }}>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            <input
+              type="text"
+              value={filterExpr}
+              onChange={e => setFilterExpr(e.target.value)}
+              placeholder="e.g.  python AND (django OR fastapi) NOT junior"
+              style={{
+                flex:1,background:'var(--surface)',border:'1px solid var(--border)',
+                borderRadius:4,padding:'5px 10px',color:'var(--text)',
+                fontFamily:'var(--mono)',fontSize:12,outline:'none'
+              }}
+            />
+            {filterExpr.trim() && (
+              <button
+                className="btn btn-outline btn-sm"
+                onClick={() => setFilterExpr('')}
+                style={{flexShrink:0}}
+              >✕</button>
+            )}
+          </div>
+          {filterExpr.trim() && (
+            <div style={{display:'flex',gap:8,alignItems:'center'}}>
+              <span style={{fontSize:11,color:'var(--text3)',fontFamily:'var(--mono)',flex:1}}>
+                {filteredQueue.length === 0
+                  ? 'no matches'
+                  : `${filteredQueue.length} match${filteredQueue.length !== 1 ? 'es' : ''}`}
+              </span>
+              <button
+                className="btn btn-success btn-sm"
+                onClick={() => batchDecide('approve')}
+                disabled={batching || filteredQueue.length === 0}
+              >
+                {batching ? <span className="spinner"/> : '✓'} approve {filteredQueue.length > 0 ? `all ${filteredQueue.length}` : ''}
+              </button>
+              <button
+                className="btn btn-danger btn-sm"
+                onClick={() => batchDecide('reject')}
+                disabled={batching || filteredQueue.length === 0}
+              >
+                {batching ? <span className="spinner"/> : '✗'} reject {filteredQueue.length > 0 ? `all ${filteredQueue.length}` : ''}
+              </button>
+            </div>
+          )}
+          <div style={{fontSize:10,color:'var(--text3)',fontFamily:'var(--mono)'}}>
+            keywords · AND · OR · NOT · ( ) — case-insensitive · matches title &amp; description
+          </div>
+        </div>
+      )}
+
       <p style={{fontSize:11,color:'var(--text3)',fontFamily:'var(--mono)',marginBottom:12}}>
         ⚠ Adzuna may show an email signup popup — click "No Thanks" to proceed to the job posting
       </p>
@@ -703,7 +852,7 @@ function PipelinePage() {
         </div>
       )}
 
-      {queue.map(job => (
+      {filteredQueue.map(job => (
         <div key={job.id} className="job-card">
           <div className="job-card-header">
             <div>
