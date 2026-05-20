@@ -669,8 +669,11 @@ function PipelinePage() {
     const parseAnd = () => {
       let left = parseNot();
       while (peek() && peek() !== ')' && peek() !== 'OR') {
+        const before = pos;
         if (peek() === 'AND') consume();
-        left = left && parseNot();
+        const right = parseNot();
+        if (pos === before) break; // nothing consumed — avoid infinite loop
+        left = left && right;
       }
       return left;
     };
