@@ -1,10 +1,13 @@
 import os
 import re
 import json
+import logging
 from groq import Groq
 from typing import List, Dict
 from dotenv import load_dotenv
 from app.location import extract_city, is_preferred, is_acceptable, is_excluded
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 def _truncate(text: str, max_words: int) -> str:
@@ -227,7 +230,11 @@ Return JSON only, no explanation:
             messages=[{"role": "user", "content": prompt}]
         )
         raw = _strip_json_fences(response.choices[0].message.content)
-        result = json.loads(raw)
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError as e:
+            logger.error("score_job JSON parse failed for '%s': %s | raw: %s", job_title, e, raw[:200])
+            raise
 
         # Apply acceptable penalty deterministically — not left to Groq
         score = max(0, min(100, int(result["score"])))

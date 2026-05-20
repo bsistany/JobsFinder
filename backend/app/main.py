@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -14,6 +15,8 @@ from app import database as db
 async def lifespan(app: FastAPI):
     await db.init_db()
     yield
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="JobsFinder API", lifespan=lifespan)
 
@@ -300,6 +303,7 @@ async def run_pipeline(request: PipelineRunRequest):
                     themes_text=profile.get("themes_text", ""),
                 )
             except Exception as e:
+                logger.error("Scoring error for '%s' [%s]: %s", job['title'], job.get('id','?'), e, exc_info=True)
                 errors.append(f"Scoring '{job['title']}': {str(e)}")
                 continue
 
