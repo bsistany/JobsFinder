@@ -524,7 +524,12 @@ function SetupPage() {
               {(() => {
                 const advisorTitles = finalTitles.filter((_,i) => selectedFinal.has(i));
                 const merged = [...new Set([...storedTitles.map(t=>t.title), ...advisorTitles])];
-                return saving ? <><span className="spinner"/> saving…</> : `✓ save ${merged.length} title${merged.length !== 1 ? 's' : ''}`;
+                const existingCount = storedTitles.length;
+                const newCount = merged.length - existingCount;
+                const label = newCount > 0
+                  ? `✓ save ${merged.length} titles (${existingCount} existing + ${newCount} new from advisor)`
+                  : `✓ save ${merged.length} titles`;
+                return saving ? <><span className="spinner"/> saving…</> : label;
               })()}
             </button>
             <button className="btn btn-outline" onClick={() => setStage(SETUP_STAGE.QUESTIONS)}>← go back</button>
