@@ -90,12 +90,9 @@ def is_preferred(city: str) -> bool:
     """Ottawa and Remote are preferred."""
     return city in ("Ottawa", "Remote")
 
-
 def is_acceptable(city: str) -> bool:
-    """Montreal is acceptable."""
-    return city == "Montreal"
-
+    return False  # Montreal removed — now excluded
 
 def is_excluded(city: str) -> bool:
-    """Anything not preferred or acceptable is hard-excluded."""
-    return not is_preferred(city) and not is_acceptable(city)
+    return not is_preferred(city)
+
