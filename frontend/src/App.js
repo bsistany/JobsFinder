@@ -326,7 +326,7 @@ function SetupPage() {
         suggested_titles: suggestedTitles.filter((_,i) => selectedSuggested.has(i)),
         answers: questions.map(q => ({ question_id: q.id, question: q.text, answer: answers[q.id] || '' }))
       });
-      const ft = r.data.titles || [];
+      const ft = (r.data.titles || []).filter(t => typeof t === 'string' && t.length < 80 && t.toLowerCase() !== 'summary');
       const sf = new Set(ft.map((_,i) => i));
       setFinalTitles(ft);
       setSelectedFinal(sf);

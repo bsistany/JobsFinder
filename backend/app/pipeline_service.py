@@ -160,12 +160,15 @@ Respond with JSON only:
         )
         raw = _strip_json_fences(response.choices[0].message.content)
         try:
-            return json.loads(raw)
+            result = json.loads(raw)
         except json.JSONDecodeError:
-            # Truncated response — extract whatever titles parsed cleanly
-            import re
             titles = re.findall(r'"([^"]+)"', raw.split('"titles"')[-1])
-            return {"titles": titles, "summary": "Titles extracted from partial response."}
+            return {"titles": [t for t in titles if len(t) < 80 and t.lower() != 'summary'], "summary": "Titles extracted from partial response."}
+        # Guard: ensure titles is a flat list of short strings only
+        titles = result.get("titles", [])
+        titles = [t for t in titles if isinstance(t, str) and len(t) < 80 and t.lower() != 'summary']
+        result["titles"] = titles
+        return result
 
     # ─── Scoring ──────────────────────────────────────────────────────────────
 
