@@ -284,6 +284,7 @@ async def run_pipeline(request: PipelineRunRequest):
             # ── Step 2: hard exclusion gate — never hits Groq ───────────────
             if is_excluded(normalized_city):
                 location_excluded += 1
+                logger.info("EXCLUDED | city=%-12s | raw_loc=%-30s | %s", normalized_city, job.get("location","")[:30], job.get("title","")[:60])
                 continue
 
             # ── Step 3: score with Groq ─────────────────────────────────────
