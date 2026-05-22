@@ -39,3 +39,6 @@ database/*.sqlite
 # zip files
 *.zip
 *.bak
+
+# my docs
+my_docs/
