@@ -18,7 +18,8 @@ cover letters on approval, and track applications — all in one tool.
 |---|---|---|
 | Frontend | React | IBM Plex Mono/Sans, dark industrial theme |
 | Backend | FastAPI (Python) | Async, auto-docs at `/docs` |
-| AI / NLP | Groq API (llama-3.1-8b-instant) | Free tier. Smart truncation per call |
+| AI / NLP | Groq API (llama-3.1-8b-instant) | Free tier. Scoring, doc generation, career advisor |
+| Semantic Search | sentence-transformers (all-MiniLM-L6-v2) | Local CPU inference, no API key, ~90MB model |
 | Job Data | Adzuna API | Canadian (`ca`) by default |
 | DB | SQLite via aiosqlite | 5 tables: profile, job_titles, applications, advisor_session, pipeline_runs |
 | Containerization | Docker + docker-compose | Frontend + backend, SQLite mounted as volume |
@@ -33,6 +34,7 @@ JobsFinder/
 │   ├── app/
 │   │   ├── main.py              # All FastAPI routes (pipeline + existing advisor/search)
 │   │   ├── pipeline_service.py  # Groq calls: analyze, score, generate docs
+│   │   ├── embedding_service.py # sentence-transformers: embed profile + jobs, cosine filter
 │   │   ├── location.py          # Pure Python location normalizer and gate functions
 │   │   ├── claude_service.py    # KEPT — Groq calls for Career Advisor tab (untouched)
 │   │   ├── adzuna_service.py    # KEPT — Adzuna job search (untouched)
@@ -50,6 +52,7 @@ JobsFinder/
 │   └── package.json
 ├── docker-compose.yml           # Backend health check, frontend depends_on backend
 ├── ROADMAP.md
+├── CONTRIBUTING.md              # Commit prefix convention
 ├── my_docs/                    # gitignored — local private documents
 │   ├── Bahman-Sistany-Intro.txt
 │   ├── Bahman-Sistany-resume-2026-V04.txt
@@ -68,11 +71,14 @@ JobsFinder/
 | Profile inputs | intro + resume + career narrative + location prefs | File upload or paste; all stored in DB |
 | Score threshold | 70% hard filter | Sub-70 dropped silently — user only sees qualified leads |
 | Location filtering | Python gate before Groq, not LLM instruction | Deterministic — LLM cannot override exclusions |
-| Location tiers | Preferred: Ottawa, Remote / Acceptable: Montreal / Everything else: excluded | Hard-coded in location.py, not stored in DB |
+| Location tiers | Preferred: Ottawa, Remote / Excluded: everything else | Hard-coded in location.py, not stored in DB |
 | City normalization | CITY_ALIASES dict + regex for remote/hybrid | Handles accents, suburbs, hybrid variants |
-| Acceptable penalty | -5 points applied in Python after scoring | Deterministic, not left to Groq |
+| Montreal | Removed from acceptable — now excluded | Too far; only Ottawa and Remote accepted |
 | Career narrative | Optional third doc from NotebookLM analysis | Improves voice matching in cover letter generation |
-| Job titles | Stored in DB, advisor-driven setup + manual edit | Textarea accepts multi-line paste — one title per line |
+| Job titles | 5-6 broad root titles stored in DB | Replaced 35+ exact titles — semantic pre-filter catches variants |
+| Embedding model | all-MiniLM-L6-v2 (local, sentence-transformers) | No API cost, no data egress, ~90MB, sufficient quality |
+| Fetch strategy | Broad root titles → location gate → embedding pre-filter → Groq scoring | Each layer cuts the pool; Groq only sees semantically relevant jobs |
+| Embedding threshold | TBD during testing | Cosine similarity cutoff — tune to balance recall vs noise |
 | Advisor session | Persisted to DB | Setup state survives navigation and page refresh |
 | Generation timing | On approval only | Never bulk-generate — one job at a time, user-triggered |
 | Career Advisor tab | Kept untouched | Separate feature for general users; not part of pipeline |
@@ -89,14 +95,11 @@ JobsFinder/
 - Ottawa — including: Gatineau, Kanata, Nepean, Hull, Orléans, Gloucester
 - Ottawa Hybrid → counts as Ottawa
 
-**Acceptable (-5 points applied in Python)**
-- Montreal — including: Montréal, Laval, Longueuil
-- Montreal Hybrid → counts as Montreal
-
-**Excluded (hard drop, never reaches Groq)**
-- Everything else — Toronto, Vancouver, Calgary, Edmonton, Unknown, etc.
+**Excluded (hard drop, never reaches embedding or Groq)**
+- Everything else — Montreal, Toronto, Vancouver, Calgary, Edmonton, Unknown, etc.
 - Hybrid only gets credit for the city it's attached to
 - "Hybrid - Vancouver" → Excluded
+- "Hybrid - Montreal" → Excluded
 
 **Normalization priority:**
 1. Remote signals in location field
@@ -105,6 +108,22 @@ JobsFinder/
 4. Remote signals in first 600 chars of description
 5. Known city in first 600 chars of description
 6. "Unknown" → Excluded
+
+---
+
+## Pipeline Flow (v0.9.0)
+
+```
+Adzuna fetch (broad root titles, e.g. 10 results/title)
+↓
+Location gate (Python — excluded cities dropped, never reach embedding or Groq)
+↓
+Embedding pre-filter (cosine similarity vs profile vector — low-relevance jobs dropped)
+↓
+Groq scoring (full score 0-100 against intro + resume + themes)
+↓
+Queue ≥70% matches
+```
 
 ---
 
@@ -132,8 +151,9 @@ JobsFinder/
 - Persists setup flow state across navigation
 
 ### `pipeline_runs`
-- `id`, `run_at`, `fetched`, `location_excluded`, `scored`, `queued`, `dropped`
+- `id`, `run_at`, `fetched`, `location_excluded`, `embedding_filtered`, `scored`, `queued`, `dropped`
 - One row per pipeline run — used for "last run at" display
+- `embedding_filtered` added in v0.9.0
 
 ---
 
@@ -149,7 +169,7 @@ JobsFinder/
 | GET/POST | `/api/pipeline/titles` | Get or replace full title list |
 | POST | `/api/pipeline/titles/add` | Add one title (or multi-line paste) |
 | DELETE | `/api/pipeline/titles/{id}` | Remove one title |
-| POST | `/api/pipeline/run` | Fetch → normalize location → gate → score → queue ≥70% |
+| POST | `/api/pipeline/run` | Fetch → location gate → embedding filter → score → queue ≥70% |
 | GET | `/api/pipeline/last-run` | Last pipeline run summary |
 | GET | `/api/pipeline/queue` | Get queued applications |
 | DELETE | `/api/pipeline/queue/clear` | Clear queued jobs only (preserves approved/drafted/applied) |
@@ -194,23 +214,35 @@ JobsFinder/
 - `location.py` — pure Python location normalizer and hard exclusion gate
 - 63 unit tests for location normalizer (`tests/test_location.py`)
 - Python gate runs before Groq — excluded cities never consume API calls
-- Queue sorted: Remote/Ottawa first, Montreal after, both by score desc
+- Queue sorted: Remote/Ottawa first, by score desc
 - `pipeline_runs` table — last run timestamp and stats
 - `fetched_at` on applications — shown on job cards
 - "Clear queue" button — deletes only queued rows, preserves everything else
 - "Last run at" banner on Pipeline page
 - docker-compose: backend health check, frontend depends_on, Postgres removed
 - Multi-line paste in title input — one title per line
+- Montreal moved from acceptable to excluded
+- Batch approve/reject with boolean keyword filter (AND, OR, NOT, parentheses)
+- Generate docs moved from queue cards to Tracker (approved/drafted jobs only)
+- CONTRIBUTING.md with commit prefix convention
+
+### v0.9.0 — Semantic Search (branch: feature/semantic-search)
+- Replace 35+ exact job titles with 5-6 broad root titles
+- `embedding_service.py` — sentence-transformers (all-MiniLM-L6-v2), local CPU inference
+- Profile vector computed once per pipeline run (intro + resume concatenated)
+- Each post-gate job description embedded and compared via cosine similarity
+- Embedding pre-filter drops irrelevant jobs before Groq scoring
+- `embedding_filtered` count added to pipeline run stats and UI
+- Similarity threshold tuned during testing
 
 ---
 
 ## 🔜 Planned
 
-### v0.9 — Quality of Life
+### v0.10 — Quality of Life
 - [ ] Pagination in pipeline run (fetch more than 10/title)
 - [ ] Re-score existing queued jobs when profile changes
 - [ ] Export tracker to CSV
-- [ ] Batch approve with one click
 - [ ] Notes field per application (free text, interview prep)
 - [ ] Interview stage tracking
 - [ ] PDF upload support
@@ -290,8 +322,8 @@ No DB wipes, no re-saving profile, no re-adding titles
 ## Fresh Start Workflow (after DB wipe)
 
 1. **Profile** → load intro + resume + career narrative → set location tiers → Save
-2. **Search Setup** → paste all titles (one per line) in textarea → add → verify count
-3. **Pipeline** → run now → check location_excluded count in stats
+2. **Search Setup** → paste root titles (one per line) → add → verify count
+3. **Pipeline** → run now → check location_excluded and embedding_filtered counts in stats
 4. Work through queue
 
 ## my_docs/ contents (gitignored)
@@ -313,3 +345,4 @@ my_docs/
 | `v0.6.0-pipeline` | Personal job match pipeline |
 | `v0.7.0-profile-enrichment` | Career narrative, file upload, location tiers |
 | `v0.8.0-pipeline-hardening` | Python location gate, tests, persistence |
+| `v0.9.0-semantic-search` | Sentence-transformers embedding pre-filter, broad root titles |
