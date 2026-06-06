@@ -597,6 +597,7 @@ function PipelinePage() {
       setLog([
         {text:`✓ Fetched ${d.fetched} jobs across all titles`, type:'done'},
         {text:`✓ ${d.location_excluded} dropped by location filter (before scoring)`, type:'done'},
+        {text:`✓ ${d.embedding_filtered} dropped by semantic filter (before scoring)`, type:'done'},
         {text:`✓ Scored ${d.scored} jobs`, type:'done'},
         {text:`✓ ${d.queued} passed the 70% threshold`, type:'done'},
         {text:`  ${d.dropped} dropped (below threshold)`, type:'active'},
@@ -768,6 +769,7 @@ function PipelinePage() {
           <div className="stats-row" style={{marginTop:16,marginBottom:0}}>
             <div className="stat-box"><div className="stat-value">{runResult.fetched}</div><div className="stat-label">fetched</div></div>
             <div className="stat-box"><div className="stat-value" style={{color:'var(--red)'}}>{runResult.location_excluded}</div><div className="stat-label">location filtered</div></div>
+            <div className="stat-box"><div className="stat-value" style={{color:'var(--red)'}}>{runResult.embedding_filtered}</div><div className="stat-label">semantic filtered</div></div>
             <div className="stat-box"><div className="stat-value">{runResult.scored}</div><div className="stat-label">scored</div></div>
             <div className="stat-box"><div className="stat-value" style={{color:'var(--green)'}}>{runResult.queued}</div><div className="stat-label">queued</div></div>
             <div className="stat-box"><div className="stat-value" style={{color:'var(--text3)'}}>{runResult.dropped}</div><div className="stat-label">below 70%</div></div>

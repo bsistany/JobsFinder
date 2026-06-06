@@ -12,3 +12,4 @@ chromadb==0.4.22
 pytest
 pytest-asyncio
 groq
+sentence-transformers>=2.7.0

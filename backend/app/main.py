@@ -9,6 +9,7 @@ from app.adzuna_service import adzuna_service
 from app.claude_service import claude_service
 from app.pipeline_service import pipeline_service
 from app.location import extract_city, is_preferred, is_excluded
+from app.embedding_service import embed_profile, is_relevant as embedding_is_relevant
 from app import database as db
 
 @asynccontextmanager
@@ -259,9 +260,16 @@ async def run_pipeline(request: PipelineRunRequest):
 
     intro_text = profile["intro_text"]
     resume_text = profile["resume_text"]
-    fetched_total = scored_total = location_excluded = 0
+    fetched_total = scored_total = location_excluded = embedding_filtered = 0
     queued_jobs = []
     errors = []
+
+    # Embed candidate profile once — reused for every job in this run
+    try:
+        profile_vector = embed_profile(intro_text, resume_text)
+    except Exception as e:
+        logger.error("Failed to embed profile: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Embedding error: {e}")
 
     for title_row in titles:
         title = title_row["title"]
@@ -287,7 +295,19 @@ async def run_pipeline(request: PipelineRunRequest):
                 print(f"EXCLUDED | city={normalized_city:<12} | raw_loc={job.get('location','')[:30]:<30} | {job.get('title','')[:60]}", flush=True)
                 continue
 
-            # ── Step 3: score with Groq ─────────────────────────────────────
+            # ── Step 3: embedding pre-filter ────────────────────────────────
+            passes, sim_score = embedding_is_relevant(
+                job_title=job["title"],
+                job_description=job.get("description", ""),
+                profile_vector=profile_vector,
+                threshold=request.embedding_threshold,
+            )
+            if not passes:
+                embedding_filtered += 1
+                print(f"EMB_FILTERED | sim={sim_score:.3f} | {job.get('title','')[:60]}", flush=True)
+                continue
+
+            # ── Step 4: score with Groq ─────────────────────────────────────
             scored_total += 1
             location_tier = (
                 "preferred" if is_preferred(normalized_city)
@@ -328,6 +348,7 @@ async def run_pipeline(request: PipelineRunRequest):
     result = {
         "fetched": fetched_total,
         "location_excluded": location_excluded,
+        "embedding_filtered": embedding_filtered,
         "scored": scored_total,
         "queued": len(queued_jobs),
         "dropped": scored_total - len(queued_jobs),
@@ -338,6 +359,7 @@ async def run_pipeline(request: PipelineRunRequest):
     await db.log_pipeline_run(
         fetched=fetched_total,
         location_excluded=location_excluded,
+        embedding_filtered=embedding_filtered,
         scored=scored_total,
         queued=len(queued_jobs),
         dropped=scored_total - len(queued_jobs),

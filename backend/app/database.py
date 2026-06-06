@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
     run_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     fetched INTEGER NOT NULL DEFAULT 0,
     location_excluded INTEGER NOT NULL DEFAULT 0,
+    embedding_filtered INTEGER NOT NULL DEFAULT 0,
     scored INTEGER NOT NULL DEFAULT 0,
     queued INTEGER NOT NULL DEFAULT 0,
     dropped INTEGER NOT NULL DEFAULT 0
@@ -111,6 +112,13 @@ async def init_db():
                 await db.execute(sql)
             except Exception:
                 pass
+        # v0.9.0 — pipeline_runs embedding_filtered column
+        try:
+            await db.execute(
+                "ALTER TABLE pipeline_runs ADD COLUMN embedding_filtered INTEGER NOT NULL DEFAULT 0"
+            )
+        except Exception:
+            pass
         await db.commit()
 
 # ─── Profile helpers ─────────────────────────────────────────────────────────
@@ -294,6 +302,7 @@ async def clear_advisor_session() -> None:
 async def log_pipeline_run(
     fetched: int,
     location_excluded: int,
+    embedding_filtered: int,
     scored: int,
     queued: int,
     dropped: int,
@@ -301,9 +310,9 @@ async def log_pipeline_run(
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             INSERT INTO pipeline_runs
-                (fetched, location_excluded, scored, queued, dropped)
-            VALUES (?, ?, ?, ?, ?)
-        """, (fetched, location_excluded, scored, queued, dropped))
+                (fetched, location_excluded, embedding_filtered, scored, queued, dropped)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (fetched, location_excluded, embedding_filtered, scored, queued, dropped))
         await db.commit()
 
 async def get_last_pipeline_run() -> dict | None:
