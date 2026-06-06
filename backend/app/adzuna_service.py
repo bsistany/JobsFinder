@@ -119,5 +119,31 @@ class AdzunaService:
             print(f"Error fetching categories: {e}")
             return []
 
+    async def search_jobs_multipage(
+        self,
+        what: str = "",
+        where: str = "",
+        country: str = "ca",
+        results_per_page: int = 50,
+        pages: int = 2,
+    ) -> Dict:
+        """Fetch multiple pages and merge results. Deduplicates by job id."""
+        all_jobs = {}
+        for page in range(1, pages + 1):
+            result = await self.search_jobs(
+                what=what, where=where, country=country,
+                results_per_page=results_per_page, page=page
+            )
+            if "error" in result:
+                break
+            for job in result.get("jobs", []):
+                if job["id"] not in all_jobs:
+                    all_jobs[job["id"]] = job
+            # Stop early if fewer results than requested (last page)
+            if len(result.get("jobs", [])) < results_per_page:
+                break
+        return {"jobs": list(all_jobs.values()), "count": len(all_jobs)}
+
+
 # Create singleton instance
 adzuna_service = AdzunaService()

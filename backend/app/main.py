@@ -81,8 +81,10 @@ class AddTitleRequest(BaseModel):
     title: str
 
 class PipelineRunRequest(BaseModel):
-    results_per_page: Optional[int] = 10
+    results_per_page: Optional[int] = 50
+    pages: Optional[int] = 2
     country: Optional[str] = "ca"
+    embedding_threshold: float = 0.25
 
 class DecideRequest(BaseModel):
     action: str
@@ -273,8 +275,11 @@ async def run_pipeline(request: PipelineRunRequest):
 
     for title_row in titles:
         title = title_row["title"]
-        result = await adzuna_service.search_jobs(
-            what=title, results_per_page=request.results_per_page, country=request.country
+        result = await adzuna_service.search_jobs_multipage(
+            what=title,
+            results_per_page=request.results_per_page,
+            pages=request.pages,
+            country=request.country,
         )
         if "error" in result:
             errors.append(f"{title}: {result['error']}")
